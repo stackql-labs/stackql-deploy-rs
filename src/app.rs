@@ -1,3 +1,22 @@
+// app.rs
+
+//! # StackQL Deploy Application Constants
+//!
+//! This module defines various constants and configuration values for the StackQL Deploy application.
+//! It includes general application metadata, default settings, supported providers, and paths to templates.
+//!
+//! ## Usage Example
+//! ```rust
+//! use crate::app::{APP_NAME, APP_VERSION, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT};
+//!
+//! println!("{} v{} running on {}:{}",
+//!     APP_NAME, APP_VERSION, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT
+//! );
+//! ```
+//!
+//! This module also contains sub-modules for template-related constants specific to
+//! AWS, Azure, and Google platforms.
+
 /// Application name
 pub const APP_NAME: &str = "stackql-deploy";
 
@@ -13,7 +32,7 @@ pub const APP_DESCRIPTION: &str = "Model driven IaC using stackql";
 /// Default server host
 pub const DEFAULT_SERVER_HOST: &str = "localhost";
 
-/// Default PostgreSQL server port
+/// Default StackQL (PostgreSQL protocol) server port
 pub const DEFAULT_SERVER_PORT: u16 = 5444;
 
 /// Local server addresses
@@ -22,28 +41,42 @@ pub const LOCAL_SERVER_ADDRESSES: [&str; 3] = ["localhost", "0.0.0.0", "127.0.0.
 /// Default log file name
 pub const DEFAULT_LOG_FILE: &str = "stackql.log";
 
-/// Supported cloud providers for init command
+/// Supported cloud providers for the `--provider` argument in the `init` command
 pub const SUPPORTED_PROVIDERS: [&str; 3] = ["aws", "google", "azure"];
 
-/// Default provider for init command
+/// Default provider for `init` command
 pub const DEFAULT_PROVIDER: &str = "azure";
 
-/// StackQL Rust binary name (platform dependent)
+/// StackQL binary name (platform dependent)
+#[cfg_attr(
+    target_os = "windows",
+    doc = "StackQL binary name (platform dependent)"
+)]
 #[cfg(target_os = "windows")]
 pub const STACKQL_BINARY_NAME: &str = "stackql.exe";
 
+#[cfg_attr(
+    not(target_os = "windows"),
+    doc = "StackQL binary name (platform dependent)"
+)]
 #[cfg(not(target_os = "windows"))]
 pub const STACKQL_BINARY_NAME: &str = "stackql";
 
 /// StackQL download URLs by platform
+#[cfg_attr(
+    target_os = "windows",
+    doc = "StackQL download URL (platform dependent)"
+)]
 #[cfg(target_os = "windows")]
 pub const STACKQL_DOWNLOAD_URL: &str =
     "https://releases.stackql.io/stackql/latest/stackql_windows_amd64.zip";
 
+#[cfg_attr(target_os = "linux", doc = "StackQL download URL (platform dependent)")]
 #[cfg(target_os = "linux")]
 pub const STACKQL_DOWNLOAD_URL: &str =
     "https://releases.stackql.io/stackql/latest/stackql_linux_amd64.zip";
 
+#[cfg_attr(target_os = "macos", doc = "StackQL download URL (platform dependent)")]
 #[cfg(target_os = "macos")]
 pub const STACKQL_DOWNLOAD_URL: &str =
     "https://storage.googleapis.com/stackql-public-releases/latest/stackql_darwin_multiarch.pkg";

@@ -1,17 +1,53 @@
-use crate::utils::binary::get_binary_path;
+// utils/stackql.rs
+
+//! # StackQL Utility Module
+//!
+//! This module provides functionalities for interacting with the `stackql` binary,
+//! such as retrieving version information, installed providers, and the binary path.
+//! It serves as a bridge between your Rust application and the StackQL CLI tool.
+//!
+//! ## Features
+//! - Retrieve `stackql` binary version and SHA information.
+//! - List installed StackQL providers.
+//! - Get the path to the `stackql` binary.
+//!
+//! ## Example Usage
+//! ```rust
+//! use crate::utils::stackql::{get_version, get_installed_providers, get_stackql_path};
+//!
+//! if let Ok(version_info) = get_version() {
+//!     println!("StackQL Version: {}, SHA: {}", version_info.version, version_info.sha);
+//! }
+//!
+//! if let Ok(providers) = get_installed_providers() {
+//!     for provider in providers {
+//!         println!("Provider: {}, Version: {}", provider.name, provider.version);
+//!     }
+//! }
+//!
+//! if let Some(path) = get_stackql_path() {
+//!     println!("StackQL Binary Path: {:?}", path);
+//! }
+//! ```
+
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
+use crate::utils::binary::get_binary_path;
+
+/// Holds version information retrieved from the `stackql` binary.
 pub struct VersionInfo {
     pub version: String,
     pub sha: String,
 }
 
+/// Represents a provider installed in the `stackql` environment.
 pub struct Provider {
     pub name: String,
     pub version: String,
 }
 
+/// Retrieves the version and SHA information of the `stackql` binary.
 pub fn get_version() -> Result<VersionInfo, String> {
     let binary_path = match get_binary_path() {
         Some(path) => path,
@@ -44,6 +80,7 @@ pub fn get_version() -> Result<VersionInfo, String> {
     Ok(VersionInfo { version, sha })
 }
 
+/// Retrieves a list of installed StackQL providers.
 pub fn get_installed_providers() -> Result<Vec<Provider>, String> {
     let binary_path = match get_binary_path() {
         Some(path) => path,
@@ -84,6 +121,7 @@ pub fn get_installed_providers() -> Result<Vec<Provider>, String> {
     Ok(providers)
 }
 
+/// Retrieves the path to the `stackql` binary.
 pub fn get_stackql_path() -> Option<PathBuf> {
     get_binary_path()
 }

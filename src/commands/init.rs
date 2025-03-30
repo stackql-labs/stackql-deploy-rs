@@ -1,26 +1,45 @@
+// commands/init.rs
+
+//! # Init Command Module
+//!
+//! This module handles the `init` command, which initializes a new StackQL Deploy project structure.
+//! It supports built-in templates for major providers (AWS, Azure, Google) as well as custom templates via URL or file path.
+//!
+//! ## Features
+//! - Initializes project structure with environment-specific directories.
+//! - Supports both embedded templates and custom templates.
+//! - Fetches templates from URLs or uses built-in ones.
+//! - Validates supported providers and applies default providers when necessary.
+//!
+//! ## Example Usage
+//! ```bash
+//! ./stackql-deploy init my-project -p aws -e prod
+//! ./stackql-deploy init my-project -t https://github.com/user/template-repo -e dev
+//! ```
+
+use std::collections::HashSet;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+
+use clap::{Arg, ArgAction, ArgMatches, Command};
+use colored::*;
+use reqwest::blocking::Client;
+use reqwest::StatusCode;
+use tera::{Context, Tera};
+
 use crate::app::{
     aws_templates, azure_templates, google_templates, DEFAULT_PROVIDER, GITHUB_TEMPLATE_BASE,
     SUPPORTED_PROVIDERS,
 };
 use crate::utils::display::print_unicode_box;
-use clap::{Arg, ArgAction, ArgMatches, Command};
-use colored::*;
-use reqwest::blocking::Client;
-use reqwest::StatusCode;
-use std::collections::HashSet;
-use std::fs;
-use std::io::Write;
-use std::path::Path;
-use tera::{Context, Tera};
 
-// Define template sources
 enum TemplateSource {
     Embedded(String), // Built-in template using one of the supported providers
     Custom(String),   // Custom template path or URL
 }
 
 impl TemplateSource {
-    // Get provider name (for embedded) or template path (for custom)
     #[allow(dead_code)]
     fn provider_or_path(&self) -> &str {
         match self {
@@ -29,7 +48,6 @@ impl TemplateSource {
         }
     }
 
-    // Determine sample resource name based on provider or template
     fn get_sample_res_name(&self) -> &str {
         match self {
             TemplateSource::Embedded(provider) => match provider.as_str() {
@@ -54,6 +72,7 @@ impl TemplateSource {
     }
 }
 
+/// Configures the `init` command for the CLI application.
 pub fn command() -> Command {
     Command::new("init")
         .about("Initialize a new stackql-deploy project structure")
@@ -89,6 +108,7 @@ pub fn command() -> Command {
         )
 }
 
+/// Executes the `init` command to initialize a new project structure.
 pub fn execute(matches: &ArgMatches) {
     print_unicode_box("🚀 Initializing new project...");
 
@@ -126,6 +146,7 @@ pub fn execute(matches: &ArgMatches) {
     }
 }
 
+/// Validates the provided provider and returns the appropriate string value.
 fn validate_provider(provider: Option<&str>) -> String {
     let supported: HashSet<&str> = SUPPORTED_PROVIDERS.iter().cloned().collect();
 
@@ -145,7 +166,7 @@ fn validate_provider(provider: Option<&str>) -> String {
     }
 }
 
-// Function to fetch template content from URL
+/// Fetches template content from a given URL.
 fn fetch_template(url: &str) -> Result<String, String> {
     let client = Client::new();
     let response = client
@@ -171,7 +192,7 @@ fn fetch_template(url: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to read template content: {}", e))
 }
 
-// Normalize GitHub URL to raw content URL
+/// Normalizes GitHub URL to raw content URL
 fn normalize_github_url(url: &str) -> String {
     if url.starts_with("https://github.com") {
         // Convert github.com URL to raw.githubusercontent.com
@@ -182,7 +203,7 @@ fn normalize_github_url(url: &str) -> String {
     }
 }
 
-// Build full URL or path for templates
+/// Builds full URL or path for templates
 fn build_template_url(template_path: &str, resource_name: &str, file_type: &str) -> String {
     // Check if template_path is an absolute URL
     if template_path.starts_with("http://") || template_path.starts_with("https://") {
@@ -207,6 +228,7 @@ fn build_template_url(template_path: &str, resource_name: &str, file_type: &str)
     }
 }
 
+/// Gets the template content based on the source and type
 fn get_template_content(
     template_source: &TemplateSource,
     template_type: &str,
@@ -245,6 +267,7 @@ fn get_template_content(
     }
 }
 
+/// Creates the project structure for a new StackQL Deploy project.
 fn create_project_structure(
     stack_name: &str,
     template_source: &TemplateSource,
@@ -285,6 +308,7 @@ fn create_project_structure(
     Ok(())
 }
 
+/// Creates a resource file in the specified directory using the provided template and context.
 fn create_resource_file(
     resource_dir: &Path,
     sample_res_name: &str,
@@ -305,6 +329,7 @@ fn create_resource_file(
     Ok(())
 }
 
+/// Creates a manifest file in the specified directory using the provided template and context.
 fn create_manifest_file(
     base_path: &Path,
     template_str: &str,
@@ -324,6 +349,7 @@ fn create_manifest_file(
     Ok(())
 }
 
+/// Creates a README file in the specified directory using the provided template and context.
 fn create_readme_file(
     base_path: &Path,
     template_str: &str,
@@ -343,6 +369,7 @@ fn create_readme_file(
     Ok(())
 }
 
+/// Renders a template string using Tera with the provided context.
 fn render_template(template_str: &str, context: &Context) -> Result<String, String> {
     // Create a one-off Tera instance for rendering a single template
     let mut tera = Tera::default();

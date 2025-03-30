@@ -1,13 +1,44 @@
+// utils/query.rs
+
+//! # Query Utility Module
+//!
+//! This module provides functions and data structures for executing SQL queries
+//! against a PostgreSQL `Client`. It supports processing query results and
+//! formatting them into various representations (rows, columns, notices).
+//!
+//! ## Features
+//! - Executes SQL queries using `postgres::Client`.
+//! - Formats query results into structured data (columns, rows, notices).
+//! - Supports different query result types: Data, Command, and Empty.
+//!
+//! ## Example Usage
+//! ```rust
+//! use crate::utils::query::{execute_query, QueryResult};
+//! use postgres::{Client, NoTls};
+//!
+//! let mut client = Client::connect("host=localhost user=postgres", NoTls).unwrap();
+//! let result = execute_query("SELECT * FROM my_table;", &mut client).unwrap();
+//!
+//! match result {
+//!     QueryResult::Data { columns, rows, .. } => println!("Received data with {} rows.", rows.len()),
+//!     QueryResult::Command(cmd) => println!("Command executed: {}", cmd),
+//!     QueryResult::Empty => println!("Query executed successfully with no result."),
+//! }
+//! ```
+
 use postgres::Client;
 
+/// Represents a column in a query result.
 pub struct QueryResultColumn {
     pub name: String,
 }
 
+/// Represents a row in a query result.
 pub struct QueryResultRow {
     pub values: Vec<String>,
 }
 
+/// Enum representing the possible results of a query execution.
 pub enum QueryResult {
     Data {
         columns: Vec<QueryResultColumn>,
@@ -19,6 +50,7 @@ pub enum QueryResult {
     Empty,
 }
 
+/// Executes an SQL query and returns the result in a structured format.
 pub fn execute_query(query: &str, client: &mut Client) -> Result<QueryResult, String> {
     match client.simple_query(query) {
         Ok(results) => {

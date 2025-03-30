@@ -1,33 +1,48 @@
-use crate::globals::{server_host, server_port};
-use crate::utils::connection::create_client;
-use crate::utils::display::print_unicode_box;
-use crate::utils::query::{execute_query, QueryResult};
-use crate::utils::server::check_and_start_server;
+// commands/shell.rs
+
+//! # Shell Command Module
+//!
+//! This module provides the `shell` command for the StackQL Deploy application.
+//! The `shell` command launches an interactive shell where users can execute queries
+//! against a StackQL server. Queries can be entered across multiple lines and are
+//! only executed when terminated with a semicolon (`;`).
+//!
+//! ## Features
+//! - Interactive query input with line history support.
+//! - Multi-line query handling using a semicolon (`;`) to indicate query completion.
+//! - Automatic server startup if not running.
+//! - Connection handling using a global connection function (`create_client`).
+//!
+//! ## Example Usage
+//! ```bash
+//! ./stackql-deploy shell
+//! ```
+//!
+
 use clap::{ArgMatches, Command};
 use colored::*;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-fn normalize_query(input: &str) -> String {
-    input
-        .split('\n')
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+use crate::globals::{server_host, server_port};
+use crate::utils::connection::create_client;
+use crate::utils::display::print_unicode_box;
+use crate::utils::query::{execute_query, QueryResult};
+use crate::utils::server::check_and_start_server;
 
+/// Configures the `shell` command for the CLI application.
 pub fn command() -> Command {
     Command::new("shell").about("Launch the interactive shell")
 }
 
+/// Executes the `shell` command, launching an interactive query interface.
 pub fn execute(_matches: &ArgMatches) {
     print_unicode_box("🔗 Launching interactive shell...");
 
     let host = server_host();
     let port = server_port();
 
-    check_and_start_server(host, port);
+    check_and_start_server();
 
     // Connect to the server using the global host and port
     let mut stackql_client_conn = create_client();
@@ -110,6 +125,17 @@ pub fn execute(_matches: &ArgMatches) {
     let _ = rl.save_history("stackql_history.txt");
 }
 
+/// Normalizes a query by trimming whitespace and combining lines.
+fn normalize_query(input: &str) -> String {
+    input
+        .split('\n')
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Prints the query result in a tabular format.
 fn print_table(
     columns: Vec<crate::utils::query::QueryResultColumn>,
     rows: Vec<crate::utils::query::QueryResultRow>,

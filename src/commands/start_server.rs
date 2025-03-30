@@ -1,11 +1,33 @@
+// commands/start_server.rs
+
+//! # Start Server Command Module
+//!
+//! This module provides the `start-server` command for the StackQL Deploy application.
+//! The `start-server` command initializes and starts a local StackQL server based on the
+//! specified configuration options such as mTLS, custom authentication, and logging levels.
+//!
+//! ## Features
+//! - Validates if the server is already running before attempting to start a new instance.
+//! - Supports configuration of mTLS and custom authentication via JSON inputs.
+//! - Allows setting of logging levels for better observability.
+//! - Uses global configuration for host and port.
+//!
+//! ## Example Usage
+//! ```bash
+//! ./stackql-deploy start-server --registry "http://localhost:8000" --log-level INFO
+//! ```
+
+use std::process;
+
+use clap::{Arg, ArgAction, ArgMatches, Command};
+use colored::*;
+
 use crate::app::LOCAL_SERVER_ADDRESSES;
 use crate::globals::{server_host, server_port};
 use crate::utils::display::print_unicode_box;
 use crate::utils::server::{is_server_running, start_server, StartServerOptions};
-use clap::{Arg, ArgAction, ArgMatches, Command};
-use colored::*;
-use std::process;
 
+/// Configures the `start-server` command for the CLI application.
 pub fn command() -> Command {
     Command::new("start-server")
         .about("Start the stackql server")
@@ -40,6 +62,7 @@ pub fn command() -> Command {
         )
 }
 
+/// Executes the `start-server` command.
 pub fn execute(matches: &ArgMatches) {
     print_unicode_box("🚀 Starting stackql server...");
 

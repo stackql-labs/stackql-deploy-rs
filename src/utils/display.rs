@@ -1,3 +1,25 @@
+// utils/display.rs
+
+//! # Display Utility Module
+//!
+//! This module provides utility functions for rendering messages with various styles
+//! including Unicode-styled message boxes and color-coded output for errors, success messages, and informational messages.
+//! It leverages the `colored` crate for styling and `unicode_width` crate for handling Unicode text width.
+//!
+//! ## Features
+//! - Unicode-styled message boxes with proper alignment for emojis and wide characters.
+//! - Color-coded messages for errors, successes, and informational outputs.
+//!
+//! ## Example Usage
+//! ```rust
+//! use crate::utils::display::{print_unicode_box, print_error, print_success, print_info};
+//!
+//! print_unicode_box("🚀 Initializing application...");
+//! print_error("Failed to connect to the server.");
+//! print_success("Operation completed successfully.");
+//! print_info("Fetching data...");
+//! ```
+
 use colored::*;
 use unicode_width::UnicodeWidthStr;
 

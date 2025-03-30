@@ -1,44 +1,75 @@
+// main.rs
+
+//! # StackQL Deploy - Main Entry Point
+//!
+//! This is the main entry point for the StackQL Deploy application.
+//! It initializes the CLI, configures global settings, and handles user commands (e.g., `build`, `teardown`, `test`, `info`, `shell`, etc.).
+//!
+//! ## Global Arguments
+//!
+//! These arguments can be specified for **any command**.
+//!
+//! - `--server`, `-h` - The server host to connect to (default: `localhost`).
+//! - `--port`, `-p` - The server port to connect to (default: `5444`).
+//!
+//! ## Example Usage
+//! ```bash
+//! ./stackql-deploy --server myserver.com --port 1234 build
+//! ./stackql-deploy shell -h localhost -p 5444
+//! ./stackql-deploy info
+//! ```
+//!
+//! For detailed help, use `--help` or `-h` flags.
+
 mod app;
 mod commands;
 mod error;
 mod globals;
 mod utils;
 
+use std::process;
+
+use clap::{Arg, ArgAction, Command};
+use error::{get_binary_path_with_error, AppError};
+
 use crate::app::{
     APP_AUTHOR, APP_DESCRIPTION, APP_NAME, APP_VERSION, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT,
     EXEMPT_COMMANDS,
 };
 use crate::utils::display::{print_error, print_info};
-use clap::{Arg, ArgAction, Command};
-use error::{get_binary_path_with_error, AppError};
-use std::process;
 
+/// Main function that initializes the CLI and handles command execution.
 fn main() {
     let matches = Command::new(APP_NAME)
         .version(APP_VERSION)
         .author(APP_AUTHOR)
         .about(APP_DESCRIPTION)
-        // global flags
+        // ====================
+        // Global Flags
+        // ====================
         .arg(
             Arg::new("server")
                 .long("server")
-                .alias("host") // Add --host as another option
-                .short('h') // Add -h shorthand
-                .help("Server host to connect to")
-                .global(true) // Make it available to all subcommands
+                .alias("host")
+                .short('h')
+                .help("Server host to connect to (default: localhost)")
+                .global(true)
                 .action(ArgAction::Set),
         )
         .arg(
             Arg::new("port")
                 .short('p')
                 .long("port")
-                .help("Server port to connect to (1024-65535)")
+                .help("Server port to connect to (default: 5444)")
                 .value_parser(clap::value_parser!(u16).range(1024..=65535))
-                .global(true) // Make it available to all subcommands
+                .global(true)
                 .action(ArgAction::Set),
         )
         .subcommand_required(true)
         .arg_required_else_help(true)
+        // ====================
+        // Subcommand Definitions
+        // ====================
         .subcommand(commands::build::command())
         .subcommand(commands::teardown::command())
         .subcommand(commands::test::command())
@@ -67,13 +98,14 @@ fn main() {
     // Check for binary existence except for exempt commands
     if !EXEMPT_COMMANDS.contains(&matches.subcommand_name().unwrap_or("")) {
         if let Err(AppError::BinaryNotFound) = get_binary_path_with_error() {
-            print_info("stackql binary not found in the current directory or in the PATH. Downloading the latest version...");
-            // Call your download code here
+            print_info("StackQL binary not found. Downloading the latest version...");
             process::exit(1);
         }
     }
 
-    // Handle command execution
+    // ====================
+    // Command Execution
+    // ====================
     match matches.subcommand() {
         Some(("build", sub_matches)) => commands::build::execute(sub_matches),
         Some(("teardown", sub_matches)) => commands::teardown::execute(sub_matches),

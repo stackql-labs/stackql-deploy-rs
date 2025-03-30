@@ -1,6 +1,34 @@
-use crate::app::{DEFAULT_LOG_FILE, LOCAL_SERVER_ADDRESSES};
-use crate::utils::binary::get_binary_path;
-use colored::*;
+// utils/server.rs
+
+//! # Server Utility Module
+//!
+//! This module provides utilities for starting, stopping, and managing StackQL server instances.
+//! It supports detecting running servers, extracting process information, and managing server lifecycles
+//! with functionalities to start, stop, and check server status across multiple platforms (Windows, Linux, macOS).
+//!
+//! ## Features
+//! - Start a StackQL server on a specified host and port.
+//! - Check if a server is running.
+//! - Retrieve running servers by scanning processes.
+//! - Stop a server by process ID (PID).
+//! - Automatically detect and manage servers running on local or remote hosts.
+//!
+//! ## Example Usage
+//! ```rust
+//! use crate::utils::server::{check_and_start_server, start_server, stop_server, StartServerOptions};
+//!
+//! let options = StartServerOptions {
+//!     host: "localhost".to_string(),
+//!     port: 5444,
+//!     ..Default::default()
+//! };
+//!
+//! match start_server(&options) {
+//!     Ok(pid) => println!("Server started with PID: {}", pid),
+//!     Err(e) => eprintln!("Failed to start server: {}", e),
+//! }
+//! ```
+
 use std::fs::OpenOptions;
 use std::path::Path;
 use std::process;
@@ -8,6 +36,13 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use colored::*;
+
+use crate::app::{DEFAULT_LOG_FILE, LOCAL_SERVER_ADDRESSES};
+use crate::globals::{server_host, server_port};
+use crate::utils::binary::get_binary_path;
+
+/// Options for starting a StackQL server
 pub struct StartServerOptions {
     pub host: String,
     pub port: u16,
@@ -30,6 +65,7 @@ impl Default for StartServerOptions {
     }
 }
 
+/// Represents a running StackQL server process
 pub struct RunningServer {
     pub pid: u32,
     pub port: u16,
@@ -280,7 +316,10 @@ pub fn stop_server(port: u16) -> Result<(), String> {
 /// * If the server is already running locally, it will display a message indicating this.
 /// * If a remote server is specified, it will display a message indicating the remote connection.
 /// * If the server needs to be started, it will attempt to do so and indicate success or failure.
-pub fn check_and_start_server(host: &str, port: u16) {
+pub fn check_and_start_server() {
+    let host = server_host();
+    let port = server_port();
+
     if LOCAL_SERVER_ADDRESSES.contains(&host) {
         if is_server_running(port) {
             println!(

@@ -1,15 +1,39 @@
+// commands/info.rs
+
+//! # Info Command Module
+//!
+//! This module handles the `info` command, which displays detailed version and configuration information
+//! about the StackQL Deploy application. It also lists installed providers and running servers.
+//!
+//! ## Features
+//! - Displays StackQL Deploy CLI version.
+//! - Retrieves and displays StackQL Library version, SHA, platform, and binary path.
+//! - Lists all running local StackQL servers by PID and port.
+//! - Displays installed providers and their versions.
+//! - Lists contributors if available via the `CONTRIBUTORS` environment variable.
+//!
+//! ## Example Usage
+//! ```bash
+//! ./stackql-deploy info
+//! ```
+//! This command will output various details about the application, library, providers, and contributors.
+
+use std::process;
+
+use clap::Command;
+use colored::*;
+
 use crate::utils::display::print_unicode_box;
 use crate::utils::platform::get_platform;
 use crate::utils::server::find_all_running_servers;
 use crate::utils::stackql::{get_installed_providers, get_stackql_path, get_version};
-use clap::Command;
-use colored::*;
-use std::process;
 
+/// Defines the `info` command for the CLI application.
 pub fn command() -> Command {
     Command::new("info").about("Display version information")
 }
 
+/// Executes the `info` command.
 pub fn execute() {
     print_unicode_box("📋 Getting program information...");
 
@@ -57,7 +81,7 @@ pub fn execute() {
         }
     }
 
-    // Update the providers display section
+    // Display installed providers
     println!("\n{}", "Installed Providers".green().bold());
     if providers.is_empty() {
         println!("  No providers installed");
@@ -67,7 +91,7 @@ pub fn execute() {
         }
     }
 
-    // Display contributors
+    // Display contributors if available
     let raw_contributors = option_env!("CONTRIBUTORS").unwrap_or("");
     let contributors: Vec<&str> = raw_contributors
         .split(',')
