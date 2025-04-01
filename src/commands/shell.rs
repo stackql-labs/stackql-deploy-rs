@@ -47,7 +47,6 @@ pub fn execute(_matches: &ArgMatches) {
     // Connect to the server using the global host and port
     let mut stackql_client_conn = create_client();
 
-    println!("Connected to stackql server at {}:{}", host, port);
     println!("Type 'exit' to quit the shell");
     println!("---");
 

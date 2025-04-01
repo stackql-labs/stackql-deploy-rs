@@ -27,7 +27,7 @@ printf "\n[STEP 4/5] Building binary...\n"
 ./ci-scripts/build.sh
 
 printf "\n[STEP 5/5] Generating documentation...\n"
-./ci-scripts/doc.sh
+# ./ci-scripts/doc.sh
 
 printf "\n🎉 Local build process completed successfully!\n"
 echo "Binary is available at: ./target/release/stackql-deploy"

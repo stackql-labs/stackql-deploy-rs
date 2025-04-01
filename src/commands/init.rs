@@ -23,7 +23,6 @@ use std::io::Write;
 use std::path::Path;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use colored::*;
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use tera::{Context, Tera};
@@ -32,7 +31,7 @@ use crate::app::{
     aws_templates, azure_templates, google_templates, DEFAULT_PROVIDER, GITHUB_TEMPLATE_BASE,
     SUPPORTED_PROVIDERS,
 };
-use crate::utils::display::print_unicode_box;
+use crate::utils::display::{print_error, print_info, print_success, print_unicode_box};
 
 enum TemplateSource {
     Embedded(String), // Built-in template using one of the supported providers
@@ -98,14 +97,6 @@ pub fn command() -> Command {
                 .action(ArgAction::Set)
                 .conflicts_with("provider"),
         )
-        .arg(
-            Arg::new("env")
-                .short('e')
-                .long("env")
-                .help("Environment name (dev, test, prod)")
-                .default_value("dev")
-                .action(ArgAction::Set),
-        )
 }
 
 /// Executes the `init` command to initialize a new project structure.
@@ -135,13 +126,10 @@ pub fn execute(matches: &ArgMatches) {
     // Create project structure
     match create_project_structure(&stack_name, &template_source, &env) {
         Ok(_) => {
-            println!(
-                "{}",
-                format!("Project {} initialized successfully.", stack_name).green()
-            );
+            print_success(format!("Project '{}' initialized successfully.", stack_name).as_str());
         }
         Err(e) => {
-            eprintln!("{}", format!("Error initializing project: {}", e).red());
+            print_error(format!("Error initializing project: {}", e).as_str());
         }
     }
 }
@@ -153,10 +141,10 @@ fn validate_provider(provider: Option<&str>) -> String {
     match provider {
         Some(p) if supported.contains(p) => p.to_string(),
         Some(p) => {
-            println!("{}", format!(
+            print_info(format!(
                 "Provider '{}' is not supported for `init`, supported providers are: {}, defaulting to `{}`",
                 p, SUPPORTED_PROVIDERS.join(", "), DEFAULT_PROVIDER
-            ).yellow());
+            ).as_str());
             DEFAULT_PROVIDER.to_string()
         }
         _none => {
@@ -258,10 +246,7 @@ fn get_template_content(
             let template_url = build_template_url(path, resource_name, template_type);
 
             // Fetch content from URL
-            println!(
-                "{}",
-                format!("Fetching template from: {}", template_url).blue()
-            );
+            print_info(format!("Fetching template from: {}", template_url).as_str());
             fetch_template(&template_url)
         }
     }

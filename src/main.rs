@@ -26,17 +26,22 @@ mod commands;
 mod error;
 mod globals;
 mod utils;
+// mod resource;
+// mod template;
 
 use std::process;
 
 use clap::{Arg, ArgAction, Command};
+
 use error::{get_binary_path_with_error, AppError};
+use log::{debug, error};
 
 use crate::app::{
-    APP_AUTHOR, APP_DESCRIPTION, APP_NAME, APP_VERSION, DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT,
-    EXEMPT_COMMANDS,
+    APP_AUTHOR, APP_DESCRIPTION, APP_NAME, APP_VERSION, DEFAULT_LOG_LEVEL, DEFAULT_SERVER_HOST,
+    DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STR, EXEMPT_COMMANDS, LOG_LEVELS,
 };
-use crate::utils::display::{print_error, print_info};
+use crate::utils::display::print_error;
+use crate::utils::logging::initialize_logger;
 
 /// Main function that initializes the CLI and handles command execution.
 fn main() {
@@ -52,17 +57,29 @@ fn main() {
                 .long("server")
                 .alias("host")
                 .short('h')
-                .help("Server host to connect to (default: localhost)")
+                .help("StackQL server host to connect to")
                 .global(true)
+                .default_value(DEFAULT_SERVER_HOST)
                 .action(ArgAction::Set),
         )
         .arg(
             Arg::new("port")
                 .short('p')
                 .long("port")
-                .help("Server port to connect to (default: 5444)")
+                .help("StackQL server port to connect to")
                 .value_parser(clap::value_parser!(u16).range(1024..=65535))
                 .global(true)
+                .default_value(DEFAULT_SERVER_PORT_STR)
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new("log-level")
+                .long("log-level")
+                .help("Set the logging level")
+                .global(true)
+                .value_parser(clap::builder::PossibleValuesParser::new(LOG_LEVELS))
+                .ignore_case(true)
+                .default_value(DEFAULT_LOG_LEVEL)
                 .action(ArgAction::Set),
         )
         .subcommand_required(true)
@@ -82,6 +99,14 @@ fn main() {
         .subcommand(commands::plan::command())
         .get_matches();
 
+    // ====================
+    // Initialize Logger
+    // ====================
+    let log_level = matches.get_one::<String>("log-level").unwrap();
+    initialize_logger(log_level);
+
+    debug!("Logger initialized with level: {}", log_level);
+
     // Get the server and port values from command-line arguments
     let server_host = matches
         .get_one::<String>("server")
@@ -92,13 +117,16 @@ fn main() {
         .get_one::<u16>("port")
         .unwrap_or(&DEFAULT_SERVER_PORT);
 
+    debug!("Server Host: {}", server_host);
+    debug!("Server Port: {}", server_port);
+
     // Initialize the global values
     globals::init_globals(server_host, server_port);
 
     // Check for binary existence except for exempt commands
     if !EXEMPT_COMMANDS.contains(&matches.subcommand_name().unwrap_or("")) {
         if let Err(AppError::BinaryNotFound) = get_binary_path_with_error() {
-            print_info("StackQL binary not found. Downloading the latest version...");
+            error!("StackQL binary not found. Downloading the latest version...");
             process::exit(1);
         }
     }
@@ -108,9 +136,9 @@ fn main() {
     // ====================
     match matches.subcommand() {
         Some(("build", sub_matches)) => commands::build::execute(sub_matches),
-        Some(("teardown", sub_matches)) => commands::teardown::execute(sub_matches),
         Some(("test", sub_matches)) => commands::test::execute(sub_matches),
-        Some(("plan", _)) => commands::plan::execute(),
+        Some(("plan", sub_matches)) => commands::plan::execute(sub_matches),
+        Some(("teardown", sub_matches)) => commands::teardown::execute(sub_matches),
         Some(("info", _)) => commands::info::execute(),
         Some(("shell", sub_matches)) => commands::shell::execute(sub_matches),
         Some(("upgrade", _)) => commands::upgrade::execute(),

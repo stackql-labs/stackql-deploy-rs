@@ -206,7 +206,7 @@ pub fn get_server_pid(port: u16) -> Option<u32> {
 pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
     let binary_path = match get_binary_path() {
         Some(path) => path,
-        _none => return Err("StackQL binary not found".to_string()),
+        _none => return Err("stackql binary not found".to_string()),
     };
 
     if is_server_running(options.port) {
@@ -340,7 +340,7 @@ pub fn check_and_start_server() {
                 process::exit(1);
             }
 
-            println!("{}", "Server started successfully".green());
+            // println!("{}", "Server started successfully".green());
         }
     } else {
         println!(

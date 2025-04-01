@@ -111,11 +111,7 @@ pub fn execute(matches: &ArgMatches) {
 
     // Start the server
     match start_server(&options) {
-        Ok(pid) => {
-            println!(
-                "{}",
-                format!("Stackql server started with PID: {}", pid).green()
-            );
+        Ok(_pid) => {
             println!(
                 "{}",
                 format!("Server is listening on {}:{}", options.host, options.port).green()

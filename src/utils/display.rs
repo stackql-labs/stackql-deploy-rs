@@ -66,7 +66,6 @@ pub fn print_error(message: &str) {
 }
 
 /// Print a success message in green
-#[allow(dead_code)]
 pub fn print_success(message: &str) {
     println!("{}", message.green());
 }

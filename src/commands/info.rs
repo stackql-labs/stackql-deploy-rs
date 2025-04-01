@@ -22,6 +22,7 @@ use std::process;
 
 use clap::Command;
 use colored::*;
+use log::error;
 
 use crate::utils::display::print_unicode_box;
 use crate::utils::platform::get_platform;
@@ -41,7 +42,7 @@ pub fn execute() {
     let version_info = match get_version() {
         Ok(info) => info,
         Err(e) => {
-            eprintln!("{}", format!("Error: {}", e).red());
+            error!("Failed to retrieve version info: {}", e);
             process::exit(1);
         }
     };

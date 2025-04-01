@@ -35,11 +35,20 @@ pub const DEFAULT_SERVER_HOST: &str = "localhost";
 /// Default StackQL (PostgreSQL protocol) server port
 pub const DEFAULT_SERVER_PORT: u16 = 5444;
 
+/// Default StackQL (PostgreSQL protocol) server port as a string
+pub const DEFAULT_SERVER_PORT_STR: &str = "5444";
+
 /// Local server addresses
 pub const LOCAL_SERVER_ADDRESSES: [&str; 3] = ["localhost", "0.0.0.0", "127.0.0.1"];
 
 /// Default log file name
 pub const DEFAULT_LOG_FILE: &str = "stackql.log";
+
+/// Default log level
+pub const LOG_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "error"];
+
+/// Default log level for the application
+pub const DEFAULT_LOG_LEVEL: &str = "info";
 
 /// Supported cloud providers for the `--provider` argument in the `init` command
 pub const SUPPORTED_PROVIDERS: [&str; 3] = ["aws", "google", "azure"];

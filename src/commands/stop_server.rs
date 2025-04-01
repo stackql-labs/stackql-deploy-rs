@@ -36,11 +36,14 @@ pub fn execute(_matches: &ArgMatches) {
 
     print_unicode_box("🛑 Stopping stackql server...");
 
-    println!("{}", format!("Stopping server on port {}", port).yellow());
+    println!(
+        "{}",
+        format!("Processing request to stop server on port {}", port).yellow()
+    );
 
     match stop_server(port) {
         Ok(_) => {
-            println!("{}", "StackQL server stopped successfully".green());
+            println!("{}", "stackql server stopped successfully".green());
         }
         Err(e) => {
             eprintln!("{}", format!("Failed to stop server: {}", e).red());

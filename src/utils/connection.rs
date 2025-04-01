@@ -23,13 +23,19 @@ use std::process;
 use colored::*;
 use postgres::{Client, NoTls};
 
-use crate::globals::connection_string;
+use crate::globals::{connection_string, server_host, server_port};
 
 /// Creates a new Client connection
 pub fn create_client() -> Client {
     let conn_str = connection_string(); // Uses your global connection string
-    Client::connect(conn_str, NoTls).unwrap_or_else(|e| {
+    let host = server_host();
+    let port = server_port();
+
+    let client = Client::connect(conn_str, NoTls).unwrap_or_else(|e| {
         eprintln!("{}", format!("Failed to connect to server: {}", e).red());
         process::exit(1); // Exit the program if connection fails, so there's no returning a Result.
-    })
+    });
+
+    println!("Connected to stackql server at {}:{}", host, port);
+    client
 }
