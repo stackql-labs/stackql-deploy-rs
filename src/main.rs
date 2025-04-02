@@ -11,6 +11,7 @@
 //!
 //! - `--server`, `-h` - The server host to connect to (default: `localhost`).
 //! - `--port`, `-p` - The server port to connect to (default: `5444`).
+//! - `--log-level` - The logging level (default: `info`). Possible values: `error`, `warn`, `info`, `debug`, `trace`.
 //!
 //! ## Example Usage
 //! ```bash
@@ -40,7 +41,6 @@ use crate::app::{
     APP_AUTHOR, APP_DESCRIPTION, APP_NAME, APP_VERSION, DEFAULT_LOG_LEVEL, DEFAULT_SERVER_HOST,
     DEFAULT_SERVER_PORT, DEFAULT_SERVER_PORT_STR, EXEMPT_COMMANDS, LOG_LEVELS,
 };
-use crate::utils::display::print_error;
 use crate::utils::logging::initialize_logger;
 
 /// Main function that initializes the CLI and handles command execution.
@@ -146,7 +146,7 @@ fn main() {
         Some(("start-server", sub_matches)) => commands::start_server::execute(sub_matches),
         Some(("stop-server", sub_matches)) => commands::stop_server::execute(sub_matches),
         _ => {
-            print_error("Unknown command. Use --help for usage.");
+            print_error!("Unknown command. Use --help for usage.");
             process::exit(1);
         }
     }

@@ -6,8 +6,8 @@
 //! about the StackQL Deploy application. It also lists installed providers and running servers.
 //!
 //! ## Features
-//! - Displays StackQL Deploy CLI version.
-//! - Retrieves and displays StackQL Library version, SHA, platform, and binary path.
+//! - Displays version information for the StackQL Deploy CLI.
+//! - Retrieves and displays StackQL binary version, SHA, platform, and binary path.
 //! - Lists all running local StackQL servers by PID and port.
 //! - Displays installed providers and their versions.
 //! - Lists contributors if available via the `CONTRIBUTORS` environment variable.

@@ -12,15 +12,14 @@
 //!
 //! ## Example Usage
 //! ```rust
-//! use crate::utils::display::{print_unicode_box, print_error, print_success, print_info};
+//! use crate::utils::display::print_unicode_box;
 //!
 //! print_unicode_box("🚀 Initializing application...");
-//! print_error("Failed to connect to the server.");
-//! print_success("Operation completed successfully.");
-//! print_info("Fetching data...");
+//! print_error!("Failed to connect to the server.");
+//! print_success!("Operation completed successfully.");
+//! print_info!("Fetching data...");
 //! ```
 
-use colored::*;
 use unicode_width::UnicodeWidthStr;
 
 /// Utility function to print a Unicode-styled message box
@@ -60,17 +59,26 @@ pub fn print_unicode_box(message: &str) {
     println!("{}", bottom_border);
 }
 
-/// Print an error message in red
-pub fn print_error(message: &str) {
-    eprintln!("{}", message.red());
+#[macro_export]
+macro_rules! print_info {
+    ($($arg:tt)*) => {{
+        use colored::Colorize;
+        println!("{}", format!($($arg)*).blue())
+    }};
 }
 
-/// Print a success message in green
-pub fn print_success(message: &str) {
-    println!("{}", message.green());
+#[macro_export]
+macro_rules! print_error {
+    ($($arg:tt)*) => {{
+        use colored::Colorize;
+        eprintln!("{}", format!($($arg)*).red())
+    }};
 }
 
-/// Print an info message in blue
-pub fn print_info(message: &str) {
-    println!("{}", message.blue());
+#[macro_export]
+macro_rules! print_success {
+    ($($arg:tt)*) => {{
+        use colored::Colorize;
+        println!("{}", format!($($arg)*).green())
+    }};
 }

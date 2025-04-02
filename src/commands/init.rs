@@ -6,15 +6,15 @@
 //! It supports built-in templates for major providers (AWS, Azure, Google) as well as custom templates via URL or file path.
 //!
 //! ## Features
-//! - Initializes project structure with environment-specific directories.
+//! - Initializes project directory structure.
 //! - Supports both embedded templates and custom templates.
 //! - Fetches templates from URLs or uses built-in ones.
 //! - Validates supported providers and applies default providers when necessary.
 //!
 //! ## Example Usage
 //! ```bash
-//! ./stackql-deploy init my-project -p aws -e prod
-//! ./stackql-deploy init my-project -t https://github.com/user/template-repo -e dev
+//! ./stackql-deploy init my-project --provider aws
+//! ./stackql-deploy init my-project --template https://github.com/user/template-repo
 //! ```
 
 use std::collections::HashSet;
@@ -31,7 +31,8 @@ use crate::app::{
     aws_templates, azure_templates, google_templates, DEFAULT_PROVIDER, GITHUB_TEMPLATE_BASE,
     SUPPORTED_PROVIDERS,
 };
-use crate::utils::display::{print_error, print_info, print_success, print_unicode_box};
+use crate::utils::display::print_unicode_box;
+use crate::{print_error, print_info, print_success};
 
 enum TemplateSource {
     Embedded(String), // Built-in template using one of the supported providers
@@ -126,10 +127,10 @@ pub fn execute(matches: &ArgMatches) {
     // Create project structure
     match create_project_structure(&stack_name, &template_source, &env) {
         Ok(_) => {
-            print_success(format!("Project '{}' initialized successfully.", stack_name).as_str());
+            print_success!("Project '{}' initialized successfully.", stack_name);
         }
         Err(e) => {
-            print_error(format!("Error initializing project: {}", e).as_str());
+            print_error!("Error initializing project: {}", e);
         }
     }
 }
@@ -141,10 +142,9 @@ fn validate_provider(provider: Option<&str>) -> String {
     match provider {
         Some(p) if supported.contains(p) => p.to_string(),
         Some(p) => {
-            print_info(format!(
-                "Provider '{}' is not supported for `init`, supported providers are: {}, defaulting to `{}`",
+            print_info!("Provider '{}' is not supported for `init`, supported providers are: {}, defaulting to `{}`",
                 p, SUPPORTED_PROVIDERS.join(", "), DEFAULT_PROVIDER
-            ).as_str());
+            );
             DEFAULT_PROVIDER.to_string()
         }
         _none => {
@@ -246,7 +246,7 @@ fn get_template_content(
             let template_url = build_template_url(path, resource_name, template_type);
 
             // Fetch content from URL
-            print_info(format!("Fetching template from: {}", template_url).as_str());
+            print_info!("Fetching template from: {}", template_url);
             fetch_template(&template_url)
         }
     }

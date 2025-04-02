@@ -36,7 +36,10 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use colored::*;
+// use clap::error;
+use log::{error, info, warn};
+
+// use colored::*;
 
 use crate::app::{DEFAULT_LOG_FILE, LOCAL_SERVER_ADDRESSES};
 use crate::globals::{server_host, server_port};
@@ -210,10 +213,7 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
     };
 
     if is_server_running(options.port) {
-        println!(
-            "{}",
-            format!("Server is already running on port {}", options.port).yellow()
-        );
+        info!("Server is already running on port {}", options.port);
         return Ok(get_server_pid(options.port).unwrap_or(0));
     }
 
@@ -253,14 +253,11 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
         .map_err(|e| format!("Failed to start server: {}", e))?;
 
     let pid = child.id();
-    println!(
-        "{}",
-        format!("Starting stackql server with PID: {}", pid).green()
-    );
+    info!("Starting stackql server with PID: {}", pid);
     thread::sleep(Duration::from_secs(5));
 
     if is_server_running(options.port) {
-        println!("{}", "Server started successfully".green());
+        info!("Server started successfully on port {}", options.port);
         Ok(pid)
     } else {
         Err("Server failed to start properly".to_string())
@@ -270,7 +267,7 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
 /// Stop the stackql server
 pub fn stop_server(port: u16) -> Result<(), String> {
     if !is_server_running(port) {
-        println!("{}", format!("No server running on port {}", port).yellow());
+        warn!("No server running on port {}", port);
         return Ok(());
     }
 
@@ -279,10 +276,7 @@ pub fn stop_server(port: u16) -> Result<(), String> {
         _none => return Err("Could not determine server PID".to_string()),
     };
 
-    println!(
-        "{}",
-        format!("Stopping stackql server with PID: {}", pid).yellow()
-    );
+    info!("Stopping stackql server with PID: {}", pid);
 
     if cfg!(target_os = "windows") {
         ProcessCommand::new("taskkill")
@@ -322,12 +316,9 @@ pub fn check_and_start_server() {
 
     if LOCAL_SERVER_ADDRESSES.contains(&host) {
         if is_server_running(port) {
-            println!(
-                "{}",
-                format!("Local server is already running on port {}.", port).green()
-            );
+            info!("Local server is already running on port {}.", port);
         } else {
-            println!("{}", "Server not running. Starting server...".yellow());
+            info!("Server not running. Starting server...");
 
             let options = StartServerOptions {
                 host: host.to_string(),
@@ -336,16 +327,11 @@ pub fn check_and_start_server() {
             };
 
             if let Err(e) = start_server(&options) {
-                eprintln!("{}", format!("Failed to start server: {}", e).red());
+                error!("Failed to start server: {}", e);
                 process::exit(1);
             }
-
-            // println!("{}", "Server started successfully".green());
         }
     } else {
-        println!(
-            "{}",
-            format!("Using remote server {}:{}", host, port).green()
-        );
+        info!("Using remote server {}:{}", host, port);
     }
 }

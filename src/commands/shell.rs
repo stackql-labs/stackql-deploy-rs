@@ -81,14 +81,44 @@ pub fn execute(_matches: &ArgMatches) {
                     let normalized_input = normalize_query(&query_buffer);
                     rl.add_history_entry(&normalized_input);
 
+                    // match execute_query(&normalized_input, &mut stackql_client_conn) {
+                    //     Ok(result) => match result {
+                    //         QueryResult::Data {
+                    //             columns,
+                    //             rows,
+                    //             notices: _,
+                    //         } => {
+                    //             print_table(columns, rows);
+                    //         }
+                    //         QueryResult::Command(cmd) => {
+                    //             println!("{}", cmd.green());
+                    //         }
+                    //         QueryResult::Empty => {
+                    //             println!("{}", "Query executed successfully. No results.".green());
+                    //         }
+                    //     },
+                    //     Err(e) => {
+                    //         eprintln!("{}", format!("Error: {}", e).red());
+                    //     }
+                    // }
+
+                    // In commands/shell.rs
                     match execute_query(&normalized_input, &mut stackql_client_conn) {
                         Ok(result) => match result {
                             QueryResult::Data {
                                 columns,
                                 rows,
-                                notices: _,
+                                notices,
                             } => {
                                 print_table(columns, rows);
+
+                                // Display notices if any
+                                if !notices.is_empty() {
+                                    println!("\n{}", "Notices:".yellow());
+                                    for notice in notices {
+                                        println!("  {}", notice.yellow());
+                                    }
+                                }
                             }
                             QueryResult::Command(cmd) => {
                                 println!("{}", cmd.green());
