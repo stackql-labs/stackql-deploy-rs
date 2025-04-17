@@ -218,8 +218,12 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
     }
 
     let mut cmd = ProcessCommand::new(&binary_path);
+    cmd.arg("srv");
     cmd.arg("--pgsrv.address").arg(&options.host);
     cmd.arg("--pgsrv.port").arg(options.port.to_string());
+
+    cmd.arg("--pgsrv.debug.enable=true");
+    cmd.arg("--pgsrv.loglevel=DEBUG");
 
     if let Some(registry) = &options.registry {
         cmd.arg("--registry").arg(registry);
@@ -237,12 +241,12 @@ pub fn start_server(options: &StartServerOptions) -> Result<u32, String> {
         cmd.arg("--log-level").arg(log_level);
     }
 
-    cmd.arg("srv");
-
     let log_path = Path::new(DEFAULT_LOG_FILE);
     let log_file = OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
+        // .append(true)
         .open(log_path)
         .map_err(|e| format!("Failed to open log file: {}", e))?;
 

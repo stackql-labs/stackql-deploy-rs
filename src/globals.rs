@@ -133,6 +133,7 @@ pub fn server_port() -> u16 {
 /// init_globals("localhost".to_string(), 5444);
 /// println!("Connection String: {}", connection_string());
 /// ```
+#[allow(dead_code)]
 pub fn connection_string() -> &'static str {
     STACKQL_CONNECTION_STRING.get().map_or("", |s| s.as_str())
 }

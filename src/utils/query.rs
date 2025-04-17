@@ -3,20 +3,20 @@
 //! # Query Utility Module
 //!
 //! This module provides functions and data structures for executing SQL queries
-//! against a PostgreSQL `Client`. It supports processing query results and
+//! against a PgwireLite client. It supports processing query results and
 //! formatting them into various representations (rows, columns, notices).
 //!
 //! ## Features
-//! - Executes SQL queries using `postgres::Client`.
+//! - Executes SQL queries using `pgwire_lite::PgwireLite`.
 //! - Formats query results into structured data (columns, rows, notices).
 //! - Supports different query result types: Data, Command, and Empty.
 //!
 //! ## Example Usage
 //! ```rust
 //! use crate::utils::query::{execute_query, QueryResult};
-//! use postgres::{Client, NoTls};
+//! use pgwire_lite::PgwireLite;
 //!
-//! let mut client = Client::connect("host=localhost user=postgres", NoTls).unwrap();
+//! let mut client = PgwireLite::new("localhost", 5432, false, "default").unwrap();
 //! let result = execute_query("SELECT * FROM my_table;", &mut client).unwrap();
 //!
 //! match result {
@@ -26,8 +26,7 @@
 //! }
 //! ```
 
-use postgres::fallible_iterator::FallibleIterator;
-use postgres::Client;
+use pgwire_lite::{PgwireLite, Value};
 
 /// Represents a column in a query result.
 pub struct QueryResultColumn {
@@ -44,109 +43,95 @@ pub enum QueryResult {
     Data {
         columns: Vec<QueryResultColumn>,
         rows: Vec<QueryResultRow>,
-        notices: Vec<String>, // Remove the #[allow(dead_code)] attribute
+        notices: Vec<String>,
     },
     Command(String),
     Empty,
 }
 
 /// Executes an SQL query and returns the result in a structured format.
-pub fn execute_query(query: &str, client: &mut Client) -> Result<QueryResult, String> {
-    match client.simple_query(query) {
-        Ok(results) => {
-            let mut columns = Vec::new();
-            // let mut rows = Vec::new();
-            // let columns = Vec::new();
-            let rows = Vec::new();
+pub fn execute_query(query: &str, client: &mut PgwireLite) -> Result<QueryResult, String> {
+    match client.query(query) {
+        Ok(result) => {
+            // Convert column names to QueryResultColumn structs
+            let columns: Vec<QueryResultColumn> = result
+                .column_names
+                .iter()
+                .map(|name| QueryResultColumn { name: name.clone() })
+                .collect();
 
-            let mut command_message = String::new();
-            let mut notices = Vec::new();
-
-            for result in results {
-                match result {
-                    postgres::SimpleQueryMessage::Row(row) => {
-                        if columns.is_empty() {
-                            for i in 0..row.len() {
-                                columns.push(QueryResultColumn {
-                                    name: row.columns()[i].name().to_string(),
-                                });
+            // Convert rows to QueryResultRow structs
+            let rows: Vec<QueryResultRow> = result
+                .rows
+                .iter()
+                .map(|row_map| {
+                    let values: Vec<String> = columns
+                        .iter()
+                        .map(|col| {
+                            match row_map.get(&col.name) {
+                                Some(Value::String(s)) => s.clone(),
+                                Some(Value::Null) => "NULL".to_string(),
+                                Some(Value::Bool(b)) => b.to_string(),
+                                Some(Value::Integer(i)) => i.to_string(),
+                                Some(Value::Float(f)) => f.to_string(),
+                                Some(_) => "UNKNOWN_TYPE".to_string(), // For any future value types
+                                None => "NULL".to_string(),
                             }
-                        }
-                    }
-                    postgres::SimpleQueryMessage::CommandComplete(cmd) => {
-                        command_message = cmd.to_string();
-                    }
-                    // Other variants like NoticeResponse aren't directly exposed
-                    _ => {}
-                }
-            }
+                        })
+                        .collect();
 
-            // Check for any notifications after the query
-            // This is a separate concept but might be what stackql is using
-            let mut notifier = client.notifications();
-            while let Ok(Some(notification)) = notifier.iter().next() {
-                notices.push(notification.payload().to_string());
-            }
+                    QueryResultRow { values }
+                })
+                .collect();
 
-            if !columns.is_empty() {
+            // Convert notices to strings
+            let notices: Vec<String> = result
+                .notices
+                .iter()
+                .map(|notice| {
+                    // Get the basic message
+                    let mut notice_text = notice
+                        .fields
+                        .get("message")
+                        .cloned()
+                        .unwrap_or_else(|| "Unknown notice".to_string());
+
+                    // Add detail if available
+                    if let Some(detail) = notice.fields.get("detail") {
+                        notice_text.push_str("\nDETAIL: ");
+                        notice_text.push_str(detail);
+                    }
+
+                    // Add hint if available
+                    if let Some(hint) = notice.fields.get("hint") {
+                        notice_text.push_str("\nHINT: ");
+                        notice_text.push_str(hint);
+                    }
+
+                    notice_text
+                })
+                .collect();
+
+            // Determine the type of result based on rows, notices, and data
+            if !rows.is_empty() || !notices.is_empty() {
+                // If we have rows OR notices, it's a data result
                 Ok(QueryResult::Data {
                     columns,
                     rows,
                     notices,
                 })
-            } else if !command_message.is_empty() {
+            } else if result.row_count > 0 {
+                // If row_count > 0 but no rows, it was a command that affected rows
+                let command_message = format!(
+                    "Command completed successfully (affected {} rows)",
+                    result.row_count
+                );
                 Ok(QueryResult::Command(command_message))
             } else {
+                // Otherwise it's an empty result
                 Ok(QueryResult::Empty)
             }
         }
         Err(e) => Err(format!("Query execution failed: {}", e)),
     }
 }
-
-// pub fn execute_query(query: &str, client: &mut Client) -> Result<QueryResult, String> {
-//     match client.simple_query(query) {
-//         Ok(results) => {
-//             let mut columns = Vec::new();
-//             let mut rows = Vec::new();
-//             let mut command_message = String::new();
-
-//             for result in results {
-//                 match result {
-//                     postgres::SimpleQueryMessage::Row(row) => {
-// if columns.is_empty() {
-//     for i in 0..row.len() {
-//         columns.push(QueryResultColumn {
-//             name: row.columns()[i].name().to_string(),
-//         });
-//     }
-//                         }
-
-//                         let row_values = (0..row.len())
-//                             .map(|i| row.get(i).unwrap_or("NULL").to_string())
-//                             .collect();
-
-//                         rows.push(QueryResultRow { values: row_values });
-//                     }
-//                     postgres::SimpleQueryMessage::CommandComplete(cmd) => {
-//                         command_message = cmd.to_string();
-//                     }
-//                     _ => {}
-//                 }
-//             }
-
-//             if !columns.is_empty() {
-//                 Ok(QueryResult::Data {
-//                     columns,
-//                     rows,
-//                     notices: vec![],
-//                 })
-//             } else if !command_message.is_empty() {
-//                 Ok(QueryResult::Command(command_message))
-//             } else {
-//                 Ok(QueryResult::Empty)
-//             }
-//         }
-//         Err(e) => Err(format!("Query execution failed: {}", e)),
-//     }
-// }

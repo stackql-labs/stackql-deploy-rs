@@ -38,6 +38,8 @@ cargo run -- build --env prod --provider aws --region us-east-1
 
 ./target/release/stackql-deploy upgrade
 
+./target/release/stackql-deploy start-server
+
 # Using built-in provider template
 ./target/release/stackql-deploy init my-project --provider aws
 
