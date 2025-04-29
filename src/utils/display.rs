@@ -20,7 +20,11 @@
 //! print_info!("Fetching data...");
 //! ```
 
+use log::debug;
 use unicode_width::UnicodeWidthStr;
+
+use crate::commands::common_args::CommonCommandArgs;
+use clap::ArgMatches;
 
 /// Utility function to print a Unicode-styled message box
 /// that correctly handles the width of emojis and other wide characters
@@ -81,4 +85,24 @@ macro_rules! print_success {
         use colored::Colorize;
         println!("{}", format!($($arg)*).green())
     }};
+}
+
+/// Log common command arguments at debug level
+pub fn log_common_command_args(args: &CommonCommandArgs, matches: &ArgMatches) {
+    debug!("Stack Directory: {}", args.stack_dir);
+    debug!("Stack Environment: {}", args.stack_env);
+    debug!("Log Level: {}", args.log_level);
+    debug!("Environment File: {}", args.env_file);
+
+    // Log environment variables if present
+    if let Some(vars) = matches.get_many::<String>("env") {
+        debug!("Environment Variables:");
+        for var in vars {
+            debug!("  - {}", var);
+        }
+    }
+
+    debug!("Dry Run: {}", args.dry_run);
+    debug!("Show Queries: {}", args.show_queries);
+    debug!("On Failure: {:?}", args.on_failure);
 }

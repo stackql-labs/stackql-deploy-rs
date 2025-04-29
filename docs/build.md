@@ -3,7 +3,7 @@ sequenceDiagram
     participant User as User/Caller
     participant Deploy as StackQL Deploy
     participant Resources as Resource Collection
-    participant DB as AWS/Cloud Provider API
+    participant DB as Cloud Provider
     
     User->>Deploy: Start deployment
     activate Deploy

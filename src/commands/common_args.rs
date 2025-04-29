@@ -5,7 +5,7 @@
 //! This module defines common command-line arguments that can be reused across
 //! different commands in the application.
 
-use clap::{value_parser, Arg, ArgAction};
+use clap::{value_parser, Arg, ArgAction, ArgMatches};
 use std::str::FromStr;
 
 /// Possible actions to take on failure
@@ -94,4 +94,36 @@ pub fn on_failure() -> Arg {
         .help("Action to take on failure")
         .value_parser(value_parser!(FailureAction))
         .default_value("error")
+}
+
+/// Structure to hold common command arguments
+#[derive(Debug)]
+pub struct CommonCommandArgs<'a> {
+    /// Directory containing stack configuration
+    pub stack_dir: &'a str,
+    /// Environment to operate on
+    pub stack_env: &'a str,
+    /// Logging level
+    pub log_level: &'a str,
+    /// Environment file path
+    pub env_file: &'a str,
+    /// Whether to run in dry-run mode
+    pub dry_run: bool,
+    /// Whether to show queries
+    pub show_queries: bool,
+    /// What to do on failure
+    pub on_failure: &'a FailureAction,
+}
+
+/// Create CommonCommandArgs from ArgMatches
+pub fn args_from_matches(matches: &ArgMatches) -> CommonCommandArgs {
+    CommonCommandArgs {
+        stack_dir: matches.get_one::<String>("stack_dir").unwrap(),
+        stack_env: matches.get_one::<String>("stack_env").unwrap(),
+        log_level: matches.get_one::<String>("log-level").unwrap(),
+        env_file: matches.get_one::<String>("env-file").unwrap(),
+        dry_run: matches.get_flag("dry-run"),
+        show_queries: matches.get_flag("show-queries"),
+        on_failure: matches.get_one::<FailureAction>("on-failure").unwrap(),
+    }
 }

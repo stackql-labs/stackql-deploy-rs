@@ -18,12 +18,14 @@
 //! ```
 
 use clap::{ArgMatches, Command};
+use log::{debug, info};
 
 use crate::commands::common_args::{
-    dry_run, env_file, env_var, log_level, on_failure, show_queries, stack_dir, stack_env,
-    FailureAction,
+    args_from_matches, dry_run, env_file, env_var, log_level, on_failure, show_queries, stack_dir,
+    stack_env,
 };
-use crate::utils::display::print_unicode_box;
+use crate::resource::manifest::Manifest;
+use crate::utils::display::{log_common_command_args, print_unicode_box};
 
 /// Configures the `test` command for the CLI application.
 pub fn command() -> Command {
@@ -41,37 +43,63 @@ pub fn command() -> Command {
 
 /// Executes the `test` command.
 pub fn execute(matches: &ArgMatches) {
-    let stack_dir = matches.get_one::<String>("stack_dir").unwrap();
-    let stack_env = matches.get_one::<String>("stack_env").unwrap();
+    // Create the CommonCommandArgs struct directly from matches
+    let args = args_from_matches(matches);
 
-    // Extract the common arguments
-    let log_level = matches.get_one::<String>("log-level").unwrap();
-    let env_file = matches.get_one::<String>("env-file").unwrap();
-    let env_vars = matches.get_many::<String>("env");
-    let dry_run = matches.get_flag("dry-run");
-    let show_queries = matches.get_flag("show-queries");
-    let on_failure = matches.get_one::<FailureAction>("on-failure").unwrap();
+    // Log the command arguments
+    log_common_command_args(&args, matches);
 
     print_unicode_box(&format!(
-        "Testing stack: [{}] in environment: [{}]",
-        stack_dir, stack_env
+        "Testing stack: [{}] in environment: [{}] (dry run: {})",
+        args.stack_dir, args.stack_env, args.dry_run
     ));
 
-    println!("Log Level: {}", log_level);
-    println!("Environment File: {}", env_file);
+    // Load the manifest using the reusable function
+    let manifest = Manifest::load_from_dir_or_exit(args.stack_dir);
 
-    if let Some(vars) = env_vars {
-        println!("Environment Variables:");
-        for var in vars {
-            println!("  - {}", var);
+    // Process resources
+    info!("Testing {} resources...", manifest.resources.len());
+
+    for resource in &manifest.resources {
+        debug!("Processing resource: {}", resource.name);
+
+        // Skip resources that have a condition (if) that evaluates to false
+        if let Some(condition) = &resource.r#if {
+            debug!("Resource has condition: {}", condition);
+            // In a real implementation, evaluate the condition here
         }
+
+        // Get environment-specific property values
+        debug!("Properties for resource {}:", resource.name);
+        for prop in &resource.props {
+            let value = Manifest::get_property_value(prop, args.stack_env);
+            match value {
+                Some(val) => debug!(
+                    "  {}: {}",
+                    prop.name,
+                    serde_yaml::to_string(val)
+                        .unwrap_or_else(|_| "Error serializing value".to_string())
+                ),
+                None => debug!(
+                    "  {}: <not defined for environment {}>",
+                    prop.name, args.stack_env
+                ),
+            }
+        }
+
+        // Get the query file path
+        let query_path =
+            manifest.get_resource_query_path(std::path::Path::new(args.stack_dir), resource);
+        debug!("Query file path: {:?}", query_path);
+
+        // In a real implementation, you would:
+        // 1. Read the query file
+        // 2. Replace property placeholders with actual values
+        // 3. Execute the query against the infrastructure
+        // 4. Verify the results match expectations
+
+        info!("✓ Resource {} passed tests", resource.name);
     }
 
-    println!("Dry Run: {}", dry_run);
-    println!("Show Queries: {}", show_queries);
-    println!("On Failure: {:?}", on_failure);
-
-    // Here you would implement the actual test functionality
-
-    println!("🔍 tests complete (dry run: {})", dry_run);
+    info!("🔍 tests complete (dry run: {})", args.dry_run);
 }

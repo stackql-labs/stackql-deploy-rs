@@ -28,6 +28,8 @@ cargo run -- build --env prod --provider aws --region us-east-1
 
 ./target/release/stackql-deploy test my-stack dev
 
+./target/release/stackql-deploy test examples/aws/aws-stack dev
+
 ./target/release/stackql-deploy teardown my-stack dev
 
 ./target/release/stackql-deploy build

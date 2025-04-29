@@ -20,6 +20,7 @@ use std::process;
 
 use clap::Command;
 use colored::*;
+use log::{error, info};
 
 use crate::utils::display::print_unicode_box;
 use crate::utils::download::download_binary;
@@ -32,7 +33,7 @@ pub fn command() -> Command {
 
 /// Executes the `upgrade` command.
 pub fn execute() {
-    print_unicode_box("📦 Upgrading stackql...");
+    print_unicode_box("📦 Installing or upgrading stackql...");
 
     // Download the latest version of stackql binary
     match download_binary() {
@@ -40,20 +41,19 @@ pub fn execute() {
             // Get the version of the newly installed binary
             match get_version() {
                 Ok(version_info) => {
-                    println!(
-                        "Successfully upgraded stackql binary to the latest version ({}) at:",
-                        version_info.version
+                    info!(
+                        "Successfully installed the latest stackql binary, version ({}) at: {}",
+                        version_info.version,
+                        path.display().to_string().green()
                     );
                 }
-                Err(_) => {
-                    println!("Successfully upgraded stackql binary to the latest version at:");
+                Err(e) => {
+                    error!("Failed to get stackql version: {}", e);
                 }
             }
-            println!("{}", path.display().to_string().green());
-            println!("Upgrade complete!");
         }
         Err(e) => {
-            eprintln!("{}", format!("Error upgrading stackql binary: {}", e).red());
+            error!("Error upgrading stackql binary: {}", e);
             process::exit(1);
         }
     }

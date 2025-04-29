@@ -26,8 +26,8 @@ mod app;
 mod commands;
 mod error;
 mod globals;
+mod resource;
 mod utils;
-// mod resource;
 // mod template;
 
 use std::process;
@@ -35,7 +35,7 @@ use std::process;
 use clap::{Arg, ArgAction, Command};
 
 use error::{get_binary_path_with_error, AppError};
-use log::{debug, error};
+use log::{debug, error, info};
 
 use crate::app::{
     APP_AUTHOR, APP_DESCRIPTION, APP_NAME, APP_VERSION, DEFAULT_LOG_LEVEL, DEFAULT_SERVER_HOST,
@@ -125,9 +125,18 @@ fn main() {
 
     // Check for binary existence except for exempt commands
     if !EXEMPT_COMMANDS.contains(&matches.subcommand_name().unwrap_or("")) {
-        if let Err(AppError::BinaryNotFound) = get_binary_path_with_error() {
-            error!("StackQL binary not found. Downloading the latest version...");
-            process::exit(1);
+        match get_binary_path_with_error() {
+            Ok(path) => debug!("StackQL binary found at: {:?}", path),
+            Err(_e) => {
+                info!("StackQL binary not found. Downloading the latest version...");
+                commands::upgrade::execute();
+
+                // Re-check for binary existence after upgrade attempt
+                if let Err(AppError::BinaryNotFound) = get_binary_path_with_error() {
+                    error!("Failed to download StackQL binary. Please try again or check your network connection.");
+                    process::exit(1);
+                }
+            }
         }
     }
 

@@ -28,13 +28,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use indicatif::{ProgressBar, ProgressStyle};
+use log::debug;
 use reqwest::blocking::Client;
 use zip::ZipArchive;
 
 use crate::app::STACKQL_DOWNLOAD_URL;
 use crate::error::AppError;
-// use crate::utils::display::print_info;
-use crate::print_info;
 use crate::utils::platform::{get_platform, Platform};
 
 /// Retrieves the URL for downloading the StackQL binary.
@@ -58,7 +57,7 @@ pub fn download_binary() -> Result<PathBuf, AppError> {
     let archive_path = current_dir.join(&archive_name);
 
     // Download the file with progress bar
-    print_info!("Downloading from {}", download_url);
+    debug!("Downloading from {}", download_url);
     let client = Client::new();
     let response = client
         .get(&download_url)
@@ -83,7 +82,7 @@ pub fn download_binary() -> Result<PathBuf, AppError> {
     progress_bar.finish_with_message("Download complete");
 
     // Extract the file based on platform
-    print_info!("Extracting the binary...");
+    debug!("Extracting the binary...");
     let binary_path = extract_binary(&archive_path, &current_dir, &binary_name)?;
 
     // Clean up the archive
@@ -100,7 +99,7 @@ pub fn download_binary() -> Result<PathBuf, AppError> {
             })?;
     }
 
-    print_info!(
+    debug!(
         "StackQL executable successfully installed at: {}",
         binary_path.display()
     );
@@ -156,7 +155,7 @@ fn extract_binary(
 
                 let outpath = match file.enclosed_name() {
                     Some(path) => dest_dir.join(path),
-                    None => continue,
+                    _none => continue,
                 };
 
                 if file.name().ends_with('/') {
