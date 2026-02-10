@@ -1,23 +1,50 @@
-use crate::error::AppError;
-use crate::utils::display::print_info;
-use crate::utils::platform::{get_platform, Platform};
-use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::blocking::Client;
+// utils/download.rs
+
+//! # Download Utility Module
+//!
+//! This module provides functions for downloading, extracting, and setting up the StackQL binary.
+//! It supports various platforms including Linux, Windows, and macOS, handling differences in
+//! extraction methods and permissions.
+//!
+//! ## Features
+//! - Downloads the StackQL binary from a predefined URL.
+//! - Supports progress tracking during download.
+//! - Extracts the binary on various platforms (Windows, Linux, macOS).
+//! - Sets executable permissions on Unix-like systems.
+//!
+//! ## Example Usage
+//! ```rust
+//! use crate::utils::download::download_binary;
+//!
+//! match download_binary() {
+//!     Ok(path) => println!("Binary downloaded to: {}", path.display()),
+//!     Err(e) => eprintln!("Failed to download binary: {}", e),
+//! }
+//! ```
+
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use indicatif::{ProgressBar, ProgressStyle};
+use log::debug;
+use reqwest::blocking::Client;
 use zip::ZipArchive;
 
+use crate::app::STACKQL_DOWNLOAD_URL;
+use crate::error::AppError;
+use crate::utils::platform::{get_platform, Platform};
+
+/// Retrieves the URL for downloading the StackQL binary.
 pub fn get_download_url() -> Result<String, AppError> {
-    match get_platform() {
-        Platform::Linux => Ok("https://releases.stackql.io/stackql/latest/stackql_linux_amd64.zip".to_string()),
-        Platform::Windows => Ok("https://releases.stackql.io/stackql/latest/stackql_windows_amd64.zip".to_string()),
-        Platform::MacOS => Ok("https://storage.googleapis.com/stackql-public-releases/latest/stackql_darwin_multiarch.pkg".to_string()),
-        Platform::Unknown => Err(AppError::CommandFailed("Unsupported OS".to_string())),
-    }
+    Ok(STACKQL_DOWNLOAD_URL.to_string())
 }
 
+/// Downloads the StackQL binary and extracts it to the current directory.
+///
+/// This function downloads the StackQL binary from a URL and unzips it if necessary.
+/// It also sets executable permissions on Unix-like systems.
 pub fn download_binary() -> Result<PathBuf, AppError> {
     let download_url = get_download_url()?;
     let current_dir = std::env::current_dir().map_err(AppError::IoError)?;
@@ -30,7 +57,7 @@ pub fn download_binary() -> Result<PathBuf, AppError> {
     let archive_path = current_dir.join(&archive_name);
 
     // Download the file with progress bar
-    print_info(&format!("Downloading from {}", download_url));
+    debug!("Downloading from {}", download_url);
     let client = Client::new();
     let response = client
         .get(&download_url)
@@ -55,7 +82,7 @@ pub fn download_binary() -> Result<PathBuf, AppError> {
     progress_bar.finish_with_message("Download complete");
 
     // Extract the file based on platform
-    print_info("Extracting the binary...");
+    debug!("Extracting the binary...");
     let binary_path = extract_binary(&archive_path, &current_dir, &binary_name)?;
 
     // Clean up the archive
@@ -72,13 +99,14 @@ pub fn download_binary() -> Result<PathBuf, AppError> {
             })?;
     }
 
-    print_info(&format!(
+    debug!(
         "StackQL executable successfully installed at: {}",
         binary_path.display()
-    ));
+    );
     Ok(binary_path)
 }
 
+/// Extracts the StackQL binary from an archive.
 fn extract_binary(
     archive_path: &Path,
     dest_dir: &Path,
@@ -102,11 +130,6 @@ fn extract_binary(
                 .output()
                 .map_err(|e| AppError::CommandFailed(format!("Failed to extract pkg: {}", e)))?;
 
-            // Find and copy the binary
-            // This might need adjustment based on the actual structure of the pkg
-            // Typically you'd need to look for the binary in the expanded package
-
-            // Example (adjust paths as needed):
             let extracted_binary = unpacked_dir
                 .join("payload")
                 .join("usr")
@@ -132,7 +155,7 @@ fn extract_binary(
 
                 let outpath = match file.enclosed_name() {
                     Some(path) => dest_dir.join(path),
-                    None => continue,
+                    _none => continue,
                 };
 
                 if file.name().ends_with('/') {

@@ -1,3 +1,26 @@
+// utils/binary.rs
+
+//! # Binary Utility Module
+//!
+//! This module provides utility functions for locating and verifying the `stackql` binary.
+//! It supports checking the binary's presence in the system `PATH` or the current directory
+//! and retrieving the full path to the binary if it exists.
+//!
+//! ## Features
+//! - Checks if the `stackql` binary is available in the system's `PATH`.
+//! - Retrieves the full path of the `stackql` binary from the current directory or `PATH`.
+//!
+//! ## Example Usage
+//! ```rust
+//! use crate::utils::binary::{binary_exists_in_path, get_binary_path};
+//!
+//! if binary_exists_in_path() {
+//!     if let Some(path) = get_binary_path() {
+//!         println!("Found stackql binary at: {:?}", path);
+//!     }
+//! }
+//! ```
+
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;

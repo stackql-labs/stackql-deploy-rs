@@ -1,125 +1,124 @@
-use crate::utils::display::print_unicode_box;
-use crate::utils::query::{execute_query, QueryResult};
-use crate::utils::server::{is_server_running, start_server, ServerOptions};
-use clap::{Arg, ArgAction, ArgMatches, Command};
+// commands/shell.rs
+
+//! # Shell Command Module
+//!
+//! This module provides the `shell` command for the StackQL Deploy application.
+//! The `shell` command launches an interactive shell where users can execute queries
+//! against a StackQL server. Queries can be entered across multiple lines and are
+//! only executed when terminated with a semicolon (`;`).
+//!
+//! ## Features
+//! - Interactive query input with line history support.
+//! - Multi-line query handling using a semicolon (`;`) to indicate query completion.
+//! - Automatic server startup if not running.
+//! - Connection handling using a global connection function (`create_client`).
+//!
+//! ## Example Usage
+//! ```bash
+//! ./stackql-deploy shell
+//! ```
+//!
+
+use clap::{ArgMatches, Command};
 use colored::*;
-use postgres::Client;
-use postgres::NoTls;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
-use std::process;
 
+use crate::globals::{server_host, server_port};
+use crate::utils::connection::create_client;
+use crate::utils::display::print_unicode_box;
+use crate::utils::query::{execute_query, QueryResult};
+use crate::utils::server::check_and_start_server;
+
+/// Configures the `shell` command for the CLI application.
 pub fn command() -> Command {
-    Command::new("shell")
-        .about("Launch the interactive shell")
-        .arg(
-            Arg::new("port")
-                .short('p')
-                .long("port")
-                .help("Port to connect to")
-                .default_value("5444")
-                .action(ArgAction::Set),
-        )
-        .arg(
-            Arg::new("host")
-                .short('h')
-                .long("host")
-                .help("Host to connect to")
-                .default_value("localhost")
-                .action(ArgAction::Set),
-        )
+    Command::new("shell").about("Launch the interactive shell")
 }
 
-pub fn execute(matches: &ArgMatches) {
+/// Executes the `shell` command, launching an interactive query interface.
+pub fn execute(_matches: &ArgMatches) {
     print_unicode_box("🔗 Launching interactive shell...");
 
-    let port = matches
-        .get_one::<String>("port")
-        .unwrap_or(&"5444".to_string())
-        .parse::<u16>()
-        .unwrap_or(5444);
+    let host = server_host();
+    let port = server_port();
 
-    let localhost = String::from("localhost");
-    let host = matches.get_one::<String>("host").unwrap_or(&localhost);
+    check_and_start_server();
 
-    if host == "localhost" && !is_server_running(port) {
-        println!("{}", "Server not running. Starting server...".yellow());
-        let options = ServerOptions {
-            port,
-            ..Default::default()
-        };
+    // Connect to the server using the global host and port
+    let mut stackql_client_conn = create_client();
 
-        match start_server(&options) {
-            Ok(_) => {
-                println!("{}", "Server started successfully".green());
-            }
-            Err(e) => {
-                eprintln!("{}", format!("Failed to start server: {}", e).red());
-                process::exit(1);
-            }
-        }
-    }
-
-    let connection_string = format!(
-        "host={} port={} user=postgres dbname=stackql application_name=stackql",
-        host, port
-    );
-    let _client = match Client::connect(&connection_string, NoTls) {
-        Ok(client) => client,
-        Err(e) => {
-            eprintln!("{}", format!("Failed to connect to server: {}", e).red());
-            process::exit(1);
-        }
-    };
-
-    println!("Connected to stackql server at {}:{}", host, port);
     println!("Type 'exit' to quit the shell");
     println!("---");
 
     let mut rl = Editor::<()>::new().unwrap();
     let _ = rl.load_history("stackql_history.txt");
 
+    let mut query_buffer = String::new(); // Accumulates input until a semicolon is found
+
     loop {
-        let prompt = format!("stackql ({}:{})=> ", host, port);
+        let prompt = if query_buffer.is_empty() {
+            format!("stackql ({}:{})=> ", host, port)
+        } else {
+            "... ".to_string()
+        };
+
         let readline = rl.readline(&prompt);
 
         match readline {
             Ok(line) => {
                 let input = line.trim();
-                if input.is_empty() {
-                    continue;
-                }
-
-                rl.add_history_entry(input);
 
                 if input.eq_ignore_ascii_case("exit") || input.eq_ignore_ascii_case("quit") {
                     println!("Goodbye");
                     break;
                 }
 
-                match execute_query(input, port) {
-                    Ok(result) => match result {
-                        QueryResult::Data {
-                            columns,
-                            rows,
-                            notices: _,
-                        } => {
-                            print_table(columns, rows);
+                // Accumulate the query
+                query_buffer.push_str(input);
+                query_buffer.push(' ');
+
+                if input.ends_with(';') {
+                    let normalized_input = normalize_query(&query_buffer);
+                    rl.add_history_entry(&normalized_input);
+
+                    match execute_query(&normalized_input, &mut stackql_client_conn) {
+                        Ok(result) => match result {
+                            QueryResult::Data {
+                                columns,
+                                rows,
+                                notices,
+                            } => {
+                                print_table(columns, rows);
+
+                                // Display notices if any
+                                if !notices.is_empty() {
+                                    println!("\n{}", "Notices:".yellow().bold());
+                                    for notice in notices {
+                                        // Split notice text by newlines to format each line
+                                        for line in notice.lines() {
+                                            println!("  {}", line.yellow());
+                                        }
+                                    }
+                                }
+                            }
+                            QueryResult::Command(cmd) => {
+                                println!("{}", cmd.green());
+                            }
+                            QueryResult::Empty => {
+                                println!("{}", "Query executed successfully. No results.".green());
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("{}", format!("Error: {}", e).red());
                         }
-                        QueryResult::Command(cmd) => {
-                            println!("{}", cmd.green());
-                        }
-                        QueryResult::Empty => {
-                            println!("{}", "Query executed successfully. No results.".green());
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("{}", format!("Error: {}", e).red());
                     }
+
+                    query_buffer.clear();
                 }
             }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
+                query_buffer.clear();
                 continue;
             }
             Err(ReadlineError::Eof) => {
@@ -136,6 +135,17 @@ pub fn execute(matches: &ArgMatches) {
     let _ = rl.save_history("stackql_history.txt");
 }
 
+/// Normalizes a query by trimming whitespace and combining lines.
+fn normalize_query(input: &str) -> String {
+    input
+        .split('\n')
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Prints the query result in a tabular format.
 fn print_table(
     columns: Vec<crate::utils::query::QueryResultColumn>,
     rows: Vec<crate::utils::query::QueryResultRow>,

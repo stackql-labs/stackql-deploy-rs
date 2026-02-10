@@ -1,52 +1,45 @@
-use crate::utils::display::print_unicode_box;
-use clap::{Arg, ArgAction, ArgMatches, Command};
-use colored::*;
-use reqwest::blocking::Client;
-use reqwest::StatusCode;
+// commands/init.rs
+
+//! # Init Command Module
+//!
+//! This module handles the `init` command, which initializes a new StackQL Deploy project structure.
+//! It supports built-in templates for major providers (AWS, Azure, Google) as well as custom templates via URL or file path.
+//!
+//! ## Features
+//! - Initializes project directory structure.
+//! - Supports both embedded templates and custom templates.
+//! - Fetches templates from URLs or uses built-in ones.
+//! - Validates supported providers and applies default providers when necessary.
+//!
+//! ## Example Usage
+//! ```bash
+//! ./stackql-deploy init my-project --provider aws
+//! ./stackql-deploy init my-project --template https://github.com/user/template-repo
+//! ```
+
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+
+use clap::{Arg, ArgAction, ArgMatches, Command};
+use reqwest::blocking::Client;
+use reqwest::StatusCode;
 use tera::{Context, Tera};
 
-// The base URL for GitHub template repository
-const GITHUB_TEMPLATE_BASE: &str =
-    "https://raw.githubusercontent.com/stackql/stackql-deploy-rust/main/template-hub/";
+use crate::app::{
+    aws_templates, azure_templates, google_templates, DEFAULT_PROVIDER, GITHUB_TEMPLATE_BASE,
+    SUPPORTED_PROVIDERS,
+};
+use crate::utils::display::print_unicode_box;
+use crate::{print_error, print_info, print_success};
 
-// AWS templates
-const AWS_RESOURCE_TEMPLATE: &str =
-    include_str!("../../template-hub/aws/starter/resources/example_vpc.iql.template");
-const AWS_MANIFEST_TEMPLATE: &str =
-    include_str!("../../template-hub/aws/starter/stackql_manifest.yml.template");
-const AWS_README_TEMPLATE: &str = include_str!("../../template-hub/aws/starter/README.md.template");
-
-// Azure templates
-const AZURE_RESOURCE_TEMPLATE: &str =
-    include_str!("../../template-hub/azure/starter/resources/example_res_grp.iql.template");
-const AZURE_MANIFEST_TEMPLATE: &str =
-    include_str!("../../template-hub/azure/starter/stackql_manifest.yml.template");
-const AZURE_README_TEMPLATE: &str =
-    include_str!("../../template-hub/azure/starter/README.md.template");
-
-// Google templates
-const GOOGLE_RESOURCE_TEMPLATE: &str =
-    include_str!("../../template-hub/google/starter/resources/example_vpc.iql.template");
-const GOOGLE_MANIFEST_TEMPLATE: &str =
-    include_str!("../../template-hub/google/starter/stackql_manifest.yml.template");
-const GOOGLE_README_TEMPLATE: &str =
-    include_str!("../../template-hub/google/starter/README.md.template");
-
-const DEFAULT_PROVIDER: &str = "azure";
-const SUPPORTED_PROVIDERS: [&str; 3] = ["aws", "google", "azure"];
-
-// Define template sources
 enum TemplateSource {
     Embedded(String), // Built-in template using one of the supported providers
     Custom(String),   // Custom template path or URL
 }
 
 impl TemplateSource {
-    // Get provider name (for embedded) or template path (for custom)
     #[allow(dead_code)]
     fn provider_or_path(&self) -> &str {
         match self {
@@ -55,7 +48,6 @@ impl TemplateSource {
         }
     }
 
-    // Determine sample resource name based on provider or template
     fn get_sample_res_name(&self) -> &str {
         match self {
             TemplateSource::Embedded(provider) => match provider.as_str() {
@@ -80,6 +72,7 @@ impl TemplateSource {
     }
 }
 
+/// Configures the `init` command for the CLI application.
 pub fn command() -> Command {
     Command::new("init")
         .about("Initialize a new stackql-deploy project structure")
@@ -105,16 +98,9 @@ pub fn command() -> Command {
                 .action(ArgAction::Set)
                 .conflicts_with("provider"),
         )
-        .arg(
-            Arg::new("env")
-                .short('e')
-                .long("env")
-                .help("Environment name (dev, test, prod)")
-                .default_value("dev")
-                .action(ArgAction::Set),
-        )
 }
 
+/// Executes the `init` command to initialize a new project structure.
 pub fn execute(matches: &ArgMatches) {
     print_unicode_box("🚀 Initializing new project...");
 
@@ -141,27 +127,24 @@ pub fn execute(matches: &ArgMatches) {
     // Create project structure
     match create_project_structure(&stack_name, &template_source, &env) {
         Ok(_) => {
-            println!(
-                "{}",
-                format!("Project {} initialized successfully.", stack_name).green()
-            );
+            print_success!("Project '{}' initialized successfully.", stack_name);
         }
         Err(e) => {
-            eprintln!("{}", format!("Error initializing project: {}", e).red());
+            print_error!("Error initializing project: {}", e);
         }
     }
 }
 
+/// Validates the provided provider and returns the appropriate string value.
 fn validate_provider(provider: Option<&str>) -> String {
     let supported: HashSet<&str> = SUPPORTED_PROVIDERS.iter().cloned().collect();
 
     match provider {
         Some(p) if supported.contains(p) => p.to_string(),
         Some(p) => {
-            println!("{}", format!(
-                "Provider '{}' is not supported for `init`, supported providers are: {}, defaulting to `{}`",
+            print_info!("Provider '{}' is not supported for `init`, supported providers are: {}, defaulting to `{}`",
                 p, SUPPORTED_PROVIDERS.join(", "), DEFAULT_PROVIDER
-            ).yellow());
+            );
             DEFAULT_PROVIDER.to_string()
         }
         _none => {
@@ -171,7 +154,7 @@ fn validate_provider(provider: Option<&str>) -> String {
     }
 }
 
-// Function to fetch template content from URL
+/// Fetches template content from a given URL.
 fn fetch_template(url: &str) -> Result<String, String> {
     let client = Client::new();
     let response = client
@@ -197,7 +180,7 @@ fn fetch_template(url: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to read template content: {}", e))
 }
 
-// Normalize GitHub URL to raw content URL
+/// Normalizes GitHub URL to raw content URL
 fn normalize_github_url(url: &str) -> String {
     if url.starts_with("https://github.com") {
         // Convert github.com URL to raw.githubusercontent.com
@@ -208,7 +191,7 @@ fn normalize_github_url(url: &str) -> String {
     }
 }
 
-// Build full URL or path for templates
+/// Builds full URL or path for templates
 fn build_template_url(template_path: &str, resource_name: &str, file_type: &str) -> String {
     // Check if template_path is an absolute URL
     if template_path.starts_with("http://") || template_path.starts_with("https://") {
@@ -233,6 +216,7 @@ fn build_template_url(template_path: &str, resource_name: &str, file_type: &str)
     }
 }
 
+/// Gets the template content based on the source and type
 fn get_template_content(
     template_source: &TemplateSource,
     template_type: &str,
@@ -242,15 +226,15 @@ fn get_template_content(
         TemplateSource::Embedded(provider) => {
             // Use embedded templates
             match (provider.as_str(), template_type) {
-                ("aws", "resource") => Ok(AWS_RESOURCE_TEMPLATE.to_string()),
-                ("aws", "manifest") => Ok(AWS_MANIFEST_TEMPLATE.to_string()),
-                ("aws", "readme") => Ok(AWS_README_TEMPLATE.to_string()),
-                ("azure", "resource") => Ok(AZURE_RESOURCE_TEMPLATE.to_string()),
-                ("azure", "manifest") => Ok(AZURE_MANIFEST_TEMPLATE.to_string()),
-                ("azure", "readme") => Ok(AZURE_README_TEMPLATE.to_string()),
-                ("google", "resource") => Ok(GOOGLE_RESOURCE_TEMPLATE.to_string()),
-                ("google", "manifest") => Ok(GOOGLE_MANIFEST_TEMPLATE.to_string()),
-                ("google", "readme") => Ok(GOOGLE_README_TEMPLATE.to_string()),
+                ("aws", "resource") => Ok(aws_templates::RESOURCE_TEMPLATE.to_string()),
+                ("aws", "manifest") => Ok(aws_templates::MANIFEST_TEMPLATE.to_string()),
+                ("aws", "readme") => Ok(aws_templates::README_TEMPLATE.to_string()),
+                ("azure", "resource") => Ok(azure_templates::RESOURCE_TEMPLATE.to_string()),
+                ("azure", "manifest") => Ok(azure_templates::MANIFEST_TEMPLATE.to_string()),
+                ("azure", "readme") => Ok(azure_templates::README_TEMPLATE.to_string()),
+                ("google", "resource") => Ok(google_templates::RESOURCE_TEMPLATE.to_string()),
+                ("google", "manifest") => Ok(google_templates::MANIFEST_TEMPLATE.to_string()),
+                ("google", "readme") => Ok(google_templates::README_TEMPLATE.to_string()),
                 _ => Err(format!(
                     "Unsupported provider or template type: {}, {}",
                     provider, template_type
@@ -262,15 +246,13 @@ fn get_template_content(
             let template_url = build_template_url(path, resource_name, template_type);
 
             // Fetch content from URL
-            println!(
-                "{}",
-                format!("Fetching template from: {}", template_url).blue()
-            );
+            print_info!("Fetching template from: {}", template_url);
             fetch_template(&template_url)
         }
     }
 }
 
+/// Creates the project structure for a new StackQL Deploy project.
 fn create_project_structure(
     stack_name: &str,
     template_source: &TemplateSource,
@@ -311,6 +293,7 @@ fn create_project_structure(
     Ok(())
 }
 
+/// Creates a resource file in the specified directory using the provided template and context.
 fn create_resource_file(
     resource_dir: &Path,
     sample_res_name: &str,
@@ -331,6 +314,7 @@ fn create_resource_file(
     Ok(())
 }
 
+/// Creates a manifest file in the specified directory using the provided template and context.
 fn create_manifest_file(
     base_path: &Path,
     template_str: &str,
@@ -350,6 +334,7 @@ fn create_manifest_file(
     Ok(())
 }
 
+/// Creates a README file in the specified directory using the provided template and context.
 fn create_readme_file(
     base_path: &Path,
     template_str: &str,
@@ -369,6 +354,7 @@ fn create_readme_file(
     Ok(())
 }
 
+/// Renders a template string using Tera with the provided context.
 fn render_template(template_str: &str, context: &Context) -> Result<String, String> {
     // Create a one-off Tera instance for rendering a single template
     let mut tera = Tera::default();
