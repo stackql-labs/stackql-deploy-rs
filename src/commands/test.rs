@@ -66,7 +66,7 @@ pub fn execute(matches: &ArgMatches) {
         // Skip resources that have a condition (if) that evaluates to false
         if let Some(condition) = &resource.r#if {
             debug!("Resource has condition: {}", condition);
-            // In a real implementation, evaluate the condition here
+            // TODO: evaluate the condition here
         }
 
         // Get environment-specific property values
@@ -75,13 +75,13 @@ pub fn execute(matches: &ArgMatches) {
             let value = Manifest::get_property_value(prop, args.stack_env);
             match value {
                 Some(val) => debug!(
-                    "  {}: {}",
+                    " [prop] {}: {}",
                     prop.name,
-                    serde_yaml::to_string(val)
+                    serde_json::to_string(val)
                         .unwrap_or_else(|_| "Error serializing value".to_string())
                 ),
                 None => debug!(
-                    "  {}: <not defined for environment {}>",
+                    "[prop] {}: <not defined for environment {}>",
                     prop.name, args.stack_env
                 ),
             }

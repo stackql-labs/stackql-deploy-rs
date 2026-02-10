@@ -255,18 +255,18 @@ impl Manifest {
         None
     }
 
-    // /// Finds a resource by name.
-    // pub fn find_resource(&self, name: &str) -> Option<&Resource> {
-    //     self.resources.iter().find(|r| r.name == name)
-    // }
+    /// Finds a resource by name.
+    pub fn find_resource(&self, name: &str) -> Option<&Resource> {
+        self.resources.iter().find(|r| r.name == name)
+    }
 
-    // /// Gets global variables as a map of name to YAML value.
-    // pub fn globals_as_map(&self) -> HashMap<String, serde_yaml::Value> {
-    //     self.globals
-    //         .iter()
-    //         .map(|g| (g.name.clone(), g.value.clone()))
-    //         .collect()
-    // }
+    /// Gets global variables as a map of name to YAML value.
+    pub fn globals_as_map(&self) -> HashMap<String, serde_yaml::Value> {
+        self.globals
+            .iter()
+            .map(|g| (g.name.clone(), g.value.clone()))
+            .collect()
+    }
 
     /// Loads a manifest file from the specified stack directory or exits with an error message.
     pub fn load_from_dir_or_exit(stack_dir: &str) -> Self {
