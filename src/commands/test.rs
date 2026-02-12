@@ -21,7 +21,6 @@ use crate::core::config::get_resource_type;
 use crate::core::utils::catch_error_and_exit;
 use crate::utils::connection::create_client;
 use crate::utils::display::{print_unicode_box, BorderColor};
-use crate::utils::logging::initialize_logger;
 
 /// Configures the `test` command for the CLI application.
 pub fn command() -> Command {
@@ -47,7 +46,6 @@ pub fn command() -> Command {
 pub fn execute(matches: &ArgMatches) {
     let stack_dir_val = matches.get_one::<String>("stack_dir").unwrap();
     let stack_env_val = matches.get_one::<String>("stack_env").unwrap();
-    let log_level_val = matches.get_one::<String>("log-level").unwrap();
     let env_file_val = matches.get_one::<String>("env-file").unwrap();
     let env_vars: Vec<String> = matches
         .get_many::<String>("env")
@@ -57,8 +55,6 @@ pub fn execute(matches: &ArgMatches) {
     let is_show_queries = matches.get_flag("show-queries");
     let on_failure_val = matches.get_one::<FailureAction>("on-failure").unwrap();
     let output_file = matches.get_one::<String>("output-file");
-
-    initialize_logger(log_level_val);
 
     let client = create_client();
     let mut runner = CommandRunner::new(
