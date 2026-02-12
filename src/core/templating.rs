@@ -233,12 +233,25 @@ fn split_dict_entries(s: &str) -> Vec<String> {
 }
 
 /// Pre-process Jinja2-specific syntax into Tera-compatible equivalents.
-/// Currently handles:
-/// - `{{ uuid() }}` -> `{{ uuid }}` (Jinja2 function call to Tera variable)
+/// Handles:
+/// - `{{ uuid() }}` -> `{{ uuid }}` (function call to variable)
+/// - `replace('x', 'y')` -> `replace(from="x", to="y")` (positional to named args)
 fn preprocess_jinja2_compat(template: &str) -> String {
+    let mut result = template.to_string();
+
     // Convert {{ uuid() }} to {{ uuid }}
-    let re = Regex::new(r"\{\{\s*uuid\(\)\s*\}\}").unwrap();
-    re.replace_all(template, "{{ uuid }}").to_string()
+    let uuid_re = Regex::new(r"\{\{\s*uuid\(\)\s*\}\}").unwrap();
+    result = uuid_re.replace_all(&result, "{{ uuid }}").to_string();
+
+    // Convert Jinja2 replace('from', 'to') to Tera replace(from="from", to="to")
+    // Matches: replace('x', 'y') or replace("x", "y") with any quoting combo
+    let replace_re =
+        Regex::new(r#"replace\(\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*\)"#).unwrap();
+    result = replace_re
+        .replace_all(&result, r#"replace(from="$1", to="$2")"#)
+        .to_string();
+
+    result
 }
 
 /// Render a single query template with the given context.
