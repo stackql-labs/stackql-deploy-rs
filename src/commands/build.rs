@@ -1,29 +1,27 @@
 // commands/build.rs
 
-//! # Build Command Module
+//! # Build Command
 //!
-//! This module handles the `build` command, which is responsible for creating or updating resources
-//! within a specified stack environment.
-//!
-//! ## Features
-//! - Accepts a stack directory and environment as input arguments.
-//! - Displays a deployment message with the provided inputs.
-//!
-//! ## Example Usage
-//! ```bash
-//! ./stackql-deploy build /path/to/stack/production prod
-//! ```
-//! The above command deploys resources from the specified stack directory to the `prod` environment.
+//! Implements the `build` (deploy) command. Creates or updates infrastructure
+//! resources defined in a stack manifest.
+//! This is the Rust equivalent of Python's `cmd/build.py` `StackQLProvisioner`.
 
-use clap::{ArgMatches, Command};
+use std::collections::HashMap;
+use std::time::Instant;
 
+use clap::{Arg, ArgMatches, Command};
+use log::info;
+
+use crate::commands::base::CommandRunner;
 use crate::commands::common_args::{
     dry_run, env_file, env_var, log_level, on_failure, show_queries, stack_dir, stack_env,
     FailureAction,
 };
-use crate::utils::display::print_unicode_box;
+use crate::core::config::get_resource_type;
+use crate::core::utils::catch_error_and_exit;
+use crate::utils::connection::create_client;
+use crate::utils::display::{print_unicode_box, BorderColor};
 use crate::utils::logging::initialize_logger;
-use log::{debug, info};
 
 /// Defines the `build` command for the CLI application.
 pub fn command() -> Command {
@@ -37,45 +35,446 @@ pub fn command() -> Command {
         .arg(dry_run())
         .arg(show_queries())
         .arg(on_failure())
+        .arg(
+            Arg::new("output-file")
+                .long("output-file")
+                .help("File path to write deployment outputs as JSON")
+                .num_args(1),
+        )
 }
 
 /// Executes the `build` command.
 pub fn execute(matches: &ArgMatches) {
-    let stack_dir = matches.get_one::<String>("stack_dir").unwrap();
-    let stack_env = matches.get_one::<String>("stack_env").unwrap();
+    let stack_dir_val = matches.get_one::<String>("stack_dir").unwrap();
+    let stack_env_val = matches.get_one::<String>("stack_env").unwrap();
+    let log_level_val = matches.get_one::<String>("log-level").unwrap();
+    let env_file_val = matches.get_one::<String>("env-file").unwrap();
+    let env_vars: Vec<String> = matches
+        .get_many::<String>("env")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    let is_dry_run = matches.get_flag("dry-run");
+    let is_show_queries = matches.get_flag("show-queries");
+    let on_failure_val = matches.get_one::<FailureAction>("on-failure").unwrap();
+    let output_file = matches.get_one::<String>("output-file");
 
-    // Extract the common arguments
-    let log_level = matches.get_one::<String>("log-level").unwrap();
-    let env_file = matches.get_one::<String>("env-file").unwrap();
-    let env_vars = matches.get_many::<String>("env");
-    let dry_run = matches.get_flag("dry-run");
-    let show_queries = matches.get_flag("show-queries");
-    let on_failure = matches.get_one::<FailureAction>("on-failure").unwrap();
+    initialize_logger(log_level_val);
 
-    // Initialize the logger
-    initialize_logger(log_level);
+    let client = create_client();
+    let mut runner = CommandRunner::new(
+        client,
+        stack_dir_val,
+        stack_env_val,
+        env_file_val,
+        &env_vars,
+    );
 
-    print_unicode_box(&format!(
-        "🚀 Deploying stack: [{}] to environment: [{}]",
-        stack_dir, stack_env
-    ));
+    let stack_name_display = if runner.stack_name.is_empty() {
+        runner.stack_dir.clone()
+    } else {
+        runner.stack_name.clone()
+    };
 
-    info!("Stack Directory: {}", stack_dir);
+    print_unicode_box(
+        &format!(
+            "Deploying stack: [{}] to environment: [{}]",
+            stack_name_display, stack_env_val
+        ),
+        BorderColor::Yellow,
+    );
 
-    println!("Log Level: {}", log_level);
-    debug!("Log Level: {}", log_level);
-    println!("Environment File: {}", env_file);
+    run_build(
+        &mut runner,
+        is_dry_run,
+        is_show_queries,
+        &format!("{:?}", on_failure_val),
+        output_file.map(|s| s.as_str()),
+    );
 
-    if let Some(vars) = env_vars {
-        println!("Environment Variables:");
-        for var in vars {
-            println!("  - {}", var);
+    if is_dry_run {
+        println!("dry-run build complete");
+    } else {
+        println!("build complete");
+    }
+}
+
+/// Main build workflow matching Python's StackQLProvisioner.run().
+fn run_build(
+    runner: &mut CommandRunner,
+    dry_run: bool,
+    show_queries: bool,
+    _on_failure: &str,
+    output_file: Option<&str>,
+) {
+    let start_time = Instant::now();
+
+    info!(
+        "deploying [{}] in [{}] environment {}",
+        runner.stack_name,
+        runner.stack_env,
+        if dry_run { "(dry run)" } else { "" }
+    );
+
+    let resources = runner.manifest.resources.clone();
+
+    for resource in &resources {
+        print_unicode_box(
+            &format!("Processing resource: [{}]", resource.name),
+            BorderColor::Blue,
+        );
+
+        let res_type = get_resource_type(resource).to_string();
+        info!(
+            "processing resource [{}], type: {}",
+            resource.name, res_type
+        );
+
+        let full_context = runner.get_full_context(resource);
+
+        // Evaluate condition
+        if !runner.evaluate_condition(resource, &full_context) {
+            continue;
+        }
+
+        // Handle script type
+        if res_type == "script" {
+            runner.process_script_resource(resource, dry_run, &full_context);
+            continue;
+        }
+
+        // Get resource queries
+        let (resource_queries, inline_query) = if let Some(sql_val) = resource
+            .sql
+            .as_ref()
+            .filter(|_| res_type == "command" || res_type == "query")
+        {
+            let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
+            (HashMap::new(), Some(iq))
+        } else {
+            (runner.get_queries(resource, &full_context), None)
+        };
+
+        // Provisioning queries for resource/multi types
+        let mut create_query: Option<String> = None;
+        let mut create_retries = 1u32;
+        let mut create_retry_delay = 0u32;
+        let mut update_query: Option<String> = None;
+        let mut update_retries = 1u32;
+        let mut update_retry_delay = 0u32;
+        let mut has_createorupdate = false;
+
+        if res_type == "resource" || res_type == "multi" {
+            if let Some(cou) = resource_queries.get("createorupdate") {
+                has_createorupdate = true;
+                create_query = Some(cou.rendered.clone());
+                create_retries = cou.options.retries;
+                create_retry_delay = cou.options.retry_delay;
+                update_query = Some(cou.rendered.clone());
+                update_retries = cou.options.retries;
+                update_retry_delay = cou.options.retry_delay;
+            } else {
+                if let Some(cq) = resource_queries.get("create") {
+                    create_query = Some(cq.rendered.clone());
+                    create_retries = cq.options.retries;
+                    create_retry_delay = cq.options.retry_delay;
+                }
+                if let Some(uq) = resource_queries.get("update") {
+                    update_query = Some(uq.rendered.clone());
+                    update_retries = uq.options.retries;
+                    update_retry_delay = uq.options.retry_delay;
+                }
+            }
+
+            if create_query.is_none() {
+                catch_error_and_exit(
+                    "iql file must include either 'create' or 'createorupdate' anchor.",
+                );
+            }
+        }
+
+        // Test queries
+        let exists_query = resource_queries.get("exists");
+        let statecheck_query = resource_queries.get("statecheck");
+        let mut exports_query_str: Option<String> =
+            resource_queries.get("exports").map(|q| q.rendered.clone());
+        let exports_opts = resource_queries.get("exports");
+        let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
+        let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
+
+        // Handle query type with no exports
+        if res_type == "query" && exports_query_str.is_none() {
+            if let Some(ref iq) = inline_query {
+                exports_query_str = Some(iq.clone());
+            } else {
+                catch_error_and_exit(
+                    "Inline sql must be supplied or an iql file must be present with an 'exports' anchor for query type resources.",
+                );
+            }
+        }
+
+        let mut exports_result_from_proxy: Option<Vec<HashMap<String, String>>> = None;
+
+        if res_type == "resource" || res_type == "multi" {
+            let ignore_errors = res_type == "multi";
+            let mut resource_exists = false;
+            let mut is_correct_state = false;
+
+            // State checking logic
+            if has_createorupdate {
+                // Skip all existence and state checks for createorupdate
+            } else if statecheck_query.is_some() {
+                // Flow 1: Traditional flow when statecheck exists
+                if let Some(eq) = exists_query {
+                    resource_exists = runner.check_if_resource_exists(
+                        resource,
+                        &eq.rendered,
+                        eq.options.retries,
+                        eq.options.retry_delay,
+                        dry_run,
+                        show_queries,
+                        false,
+                    );
+                } else {
+                    // Use statecheck as exists check
+                    let sq = statecheck_query.unwrap();
+                    is_correct_state = runner.check_if_resource_is_correct_state(
+                        resource,
+                        &sq.rendered,
+                        sq.options.retries,
+                        sq.options.retry_delay,
+                        dry_run,
+                        show_queries,
+                    );
+                    resource_exists = is_correct_state;
+                }
+
+                // Pre-deployment state check for existing resources
+                if resource_exists && !is_correct_state {
+                    if resource.skip_validation.unwrap_or(false) {
+                        info!(
+                            "skipping validation for [{}] as skip_validation is set to true.",
+                            resource.name
+                        );
+                        is_correct_state = true;
+                    } else {
+                        let sq = statecheck_query.unwrap();
+                        is_correct_state = runner.check_if_resource_is_correct_state(
+                            resource,
+                            &sq.rendered,
+                            sq.options.retries,
+                            sq.options.retry_delay,
+                            dry_run,
+                            show_queries,
+                        );
+                    }
+                }
+            } else if let Some(eq_str) = exports_query_str.as_ref() {
+                // Flow 2: Optimized flow using exports as proxy
+                info!(
+                    "trying exports query first (fast-fail) for optimal validation for [{}]",
+                    resource.name
+                );
+                let (state, proxy_result) = runner.check_state_using_exports_proxy(
+                    resource,
+                    eq_str,
+                    1,
+                    0,
+                    dry_run,
+                    show_queries,
+                );
+                is_correct_state = state;
+                resource_exists = is_correct_state;
+
+                if is_correct_state {
+                    info!(
+                        "[{}] validated successfully with fast exports query",
+                        resource.name
+                    );
+                    exports_result_from_proxy = proxy_result;
+                } else {
+                    info!(
+                        "fast exports validation failed, falling back to exists check for [{}]",
+                        resource.name
+                    );
+                    exports_result_from_proxy = None;
+
+                    if let Some(eq) = exists_query {
+                        resource_exists = runner.check_if_resource_exists(
+                            resource,
+                            &eq.rendered,
+                            eq.options.retries,
+                            eq.options.retry_delay,
+                            dry_run,
+                            show_queries,
+                            false,
+                        );
+                    } else {
+                        resource_exists = false;
+                    }
+                }
+            } else if let Some(eq) = exists_query {
+                // Flow 3: Basic flow with only exists query
+                resource_exists = runner.check_if_resource_exists(
+                    resource,
+                    &eq.rendered,
+                    eq.options.retries,
+                    eq.options.retry_delay,
+                    dry_run,
+                    show_queries,
+                    false,
+                );
+            } else {
+                catch_error_and_exit(
+                    "iql file must include either 'exists', 'statecheck', or 'exports' anchor.",
+                );
+            }
+
+            // Create or update
+            let mut is_created_or_updated = false;
+
+            if !resource_exists {
+                is_created_or_updated = runner.create_resource(
+                    resource,
+                    create_query.as_ref().unwrap(),
+                    create_retries,
+                    create_retry_delay,
+                    dry_run,
+                    show_queries,
+                    ignore_errors,
+                );
+            }
+
+            if resource_exists && !is_correct_state {
+                is_created_or_updated = runner.update_resource(
+                    resource,
+                    update_query.as_deref(),
+                    update_retries,
+                    update_retry_delay,
+                    dry_run,
+                    show_queries,
+                    ignore_errors,
+                );
+            }
+
+            // Post-deploy state check
+            if is_created_or_updated {
+                if let Some(sq) = statecheck_query {
+                    is_correct_state = runner.check_if_resource_is_correct_state(
+                        resource,
+                        &sq.rendered,
+                        sq.options.retries,
+                        sq.options.retry_delay,
+                        dry_run,
+                        show_queries,
+                    );
+                } else if let Some(ref eq_str) = exports_query_str {
+                    info!(
+                        "using exports query as post-deploy statecheck for [{}]",
+                        resource.name
+                    );
+                    let post_retries = if statecheck_query.is_some_and(|sq| sq.options.retries > 1)
+                    {
+                        statecheck_query.unwrap().options.retries
+                    } else {
+                        exports_retries
+                    };
+                    let post_delay = if statecheck_query.is_some_and(|sq| sq.options.retries > 1) {
+                        statecheck_query.unwrap().options.retry_delay
+                    } else {
+                        exports_retry_delay
+                    };
+
+                    let (state, proxy) = runner.check_state_using_exports_proxy(
+                        resource,
+                        eq_str,
+                        post_retries,
+                        post_delay,
+                        dry_run,
+                        show_queries,
+                    );
+                    is_correct_state = state;
+                    if proxy.is_some() {
+                        exports_result_from_proxy = proxy;
+                    }
+                }
+            }
+
+            if !is_correct_state && !dry_run {
+                catch_error_and_exit(&format!(
+                    "deployment failed for {} after post-deploy checks.",
+                    resource.name
+                ));
+            }
+        }
+
+        // Handle command type
+        if res_type == "command" {
+            let (command_query, command_retries, command_retry_delay) = if let Some(ref iq) =
+                inline_query
+            {
+                (iq.clone(), 1u32, 0u32)
+            } else if let Some(cq) = resource_queries.get("command") {
+                (
+                    cq.rendered.clone(),
+                    cq.options.retries,
+                    cq.options.retry_delay,
+                )
+            } else {
+                catch_error_and_exit(
+                        "'sql' should be defined in the resource or the 'command' anchor needs to be supplied in the corresponding iql file for command type resources.",
+                    );
+            };
+
+            runner.run_command(
+                &command_query,
+                command_retries,
+                command_retry_delay,
+                dry_run,
+                show_queries,
+            );
+        }
+
+        // Process exports with optimization
+        if let Some(ref eq_str) = exports_query_str {
+            if let Some(ref proxy_result) = exports_result_from_proxy {
+                if res_type == "resource" || res_type == "multi" {
+                    info!(
+                        "reusing exports result from proxy for [{}]...",
+                        resource.name
+                    );
+                    if !resource.exports.is_empty() {
+                        runner.process_exports_from_result(resource, proxy_result);
+                    }
+                }
+            } else {
+                runner.process_exports(
+                    resource,
+                    &full_context,
+                    eq_str,
+                    exports_retries,
+                    exports_retry_delay,
+                    dry_run,
+                    show_queries,
+                    false,
+                );
+            }
+        }
+
+        if !dry_run {
+            if res_type == "resource" {
+                info!("successfully deployed {}", resource.name);
+            } else if res_type == "query" {
+                info!(
+                    "successfully exported variables for query in {}",
+                    resource.name
+                );
+            }
         }
     }
 
-    println!("Dry Run: {}", dry_run);
-    println!("Show Queries: {}", show_queries);
-    println!("On Failure: {:?}", on_failure);
+    let elapsed = start_time.elapsed();
+    let elapsed_str = format!("{:.2?}", elapsed);
+    info!("deployment completed in {}", elapsed_str);
 
-    // Actual implementation would go here
+    runner.process_stack_exports(dry_run, output_file, &elapsed_str);
 }

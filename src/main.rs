@@ -24,11 +24,12 @@
 
 mod app;
 mod commands;
+pub mod core;
 mod error;
 mod globals;
 mod resource;
+mod template;
 mod utils;
-// mod template;
 
 use std::process;
 

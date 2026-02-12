@@ -52,10 +52,13 @@ pub fn execute(matches: &ArgMatches) {
     let show_queries = matches.get_flag("show-queries");
     let on_failure = matches.get_one::<FailureAction>("on-failure").unwrap();
 
-    print_unicode_box(&format!(
-        "🔮 Planning changes for stack: [{}] in environment: [{}]",
-        stack_dir, stack_env
-    ));
+    print_unicode_box(
+        &format!(
+            "Planning changes for stack: [{}] in environment: [{}]",
+            stack_dir, stack_env
+        ),
+        crate::utils::display::BorderColor::Yellow,
+    );
 
     println!("Log Level: {}", log_level);
     println!("Environment File: {}", env_file);

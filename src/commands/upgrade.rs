@@ -33,7 +33,10 @@ pub fn command() -> Command {
 
 /// Executes the `upgrade` command.
 pub fn execute() {
-    print_unicode_box("📦 Installing or upgrading stackql...");
+    print_unicode_box(
+        "Installing or upgrading stackql...",
+        crate::utils::display::BorderColor::Yellow,
+    );
 
     // Download the latest version of stackql binary
     match download_binary() {

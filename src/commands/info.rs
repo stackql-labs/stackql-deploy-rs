@@ -36,7 +36,10 @@ pub fn command() -> Command {
 
 /// Executes the `info` command.
 pub fn execute() {
-    print_unicode_box("📋 Getting program information...");
+    print_unicode_box(
+        "Getting program information...",
+        crate::utils::display::BorderColor::Green,
+    );
 
     // Get stackql version
     let version_info = match get_version() {

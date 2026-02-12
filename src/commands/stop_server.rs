@@ -34,7 +34,10 @@ pub fn command() -> Command {
 pub fn execute(_matches: &ArgMatches) {
     let port = server_port();
 
-    print_unicode_box("🛑 Stopping stackql server...");
+    print_unicode_box(
+        "Stopping stackql server...",
+        crate::utils::display::BorderColor::Red,
+    );
 
     println!(
         "{}",

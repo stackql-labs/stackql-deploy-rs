@@ -1,31 +1,27 @@
 // commands/test.rs
 
-//! # Test Command Module
+//! # Test Command
 //!
-//! This module provides the `test` command for the StackQL Deploy application.
-//! The `test` command checks whether a specified stack is in the correct desired state
-//! within a given environment. It validates the current state against expected outputs
-//! defined in the stack configuration.
-//!
-//! ## Features
-//! - Validates the current infrastructure state against the desired state.
-//! - Ensures all resources are correctly provisioned and meet specified requirements.
-//! - Uses the same positional arguments as `build`, `plan`, and `teardown` commands.
-//!
-//! ## Example Usage
-//! ```bash
-//! ./stackql-deploy test /path/to/stack dev
-//! ```
+//! Implements the `test` command. Validates that deployed resources are in
+//! the correct desired state.
+//! This is the Rust equivalent of Python's `cmd/test.py` `StackQLTestRunner`.
 
-use clap::{ArgMatches, Command};
-use log::{debug, info};
+use std::collections::HashMap;
+use std::time::Instant;
 
+use clap::{Arg, ArgMatches, Command};
+use log::info;
+
+use crate::commands::base::CommandRunner;
 use crate::commands::common_args::{
-    args_from_matches, dry_run, env_file, env_var, log_level, on_failure, show_queries, stack_dir,
-    stack_env,
+    dry_run, env_file, env_var, log_level, on_failure, show_queries, stack_dir, stack_env,
+    FailureAction,
 };
-use crate::resource::manifest::Manifest;
-use crate::utils::display::{log_common_command_args, print_unicode_box};
+use crate::core::config::get_resource_type;
+use crate::core::utils::catch_error_and_exit;
+use crate::utils::connection::create_client;
+use crate::utils::display::{print_unicode_box, BorderColor};
+use crate::utils::logging::initialize_logger;
 
 /// Configures the `test` command for the CLI application.
 pub fn command() -> Command {
@@ -39,67 +35,213 @@ pub fn command() -> Command {
         .arg(dry_run())
         .arg(show_queries())
         .arg(on_failure())
+        .arg(
+            Arg::new("output-file")
+                .long("output-file")
+                .help("File path to write deployment outputs as JSON")
+                .num_args(1),
+        )
 }
 
 /// Executes the `test` command.
 pub fn execute(matches: &ArgMatches) {
-    // Create the CommonCommandArgs struct directly from matches
-    let args = args_from_matches(matches);
+    let stack_dir_val = matches.get_one::<String>("stack_dir").unwrap();
+    let stack_env_val = matches.get_one::<String>("stack_env").unwrap();
+    let log_level_val = matches.get_one::<String>("log-level").unwrap();
+    let env_file_val = matches.get_one::<String>("env-file").unwrap();
+    let env_vars: Vec<String> = matches
+        .get_many::<String>("env")
+        .map(|v| v.cloned().collect())
+        .unwrap_or_default();
+    let is_dry_run = matches.get_flag("dry-run");
+    let is_show_queries = matches.get_flag("show-queries");
+    let on_failure_val = matches.get_one::<FailureAction>("on-failure").unwrap();
+    let output_file = matches.get_one::<String>("output-file");
 
-    // Log the command arguments
-    log_common_command_args(&args, matches);
+    initialize_logger(log_level_val);
 
-    print_unicode_box(&format!(
-        "Testing stack: [{}] in environment: [{}] (dry run: {})",
-        args.stack_dir, args.stack_env, args.dry_run
-    ));
+    let client = create_client();
+    let mut runner = CommandRunner::new(
+        client,
+        stack_dir_val,
+        stack_env_val,
+        env_file_val,
+        &env_vars,
+    );
 
-    // Load the manifest using the reusable function
-    let manifest = Manifest::load_from_dir_or_exit(args.stack_dir);
+    let stack_name_display = if runner.stack_name.is_empty() {
+        runner.stack_dir.clone()
+    } else {
+        runner.stack_name.clone()
+    };
 
-    // Process resources
-    info!("Testing {} resources...", manifest.resources.len());
+    print_unicode_box(
+        &format!(
+            "Testing stack: [{}] in environment: [{}]",
+            stack_name_display, stack_env_val
+        ),
+        BorderColor::Yellow,
+    );
 
-    for resource in &manifest.resources {
-        debug!("Processing resource: {}", resource.name);
+    run_test(
+        &mut runner,
+        is_dry_run,
+        is_show_queries,
+        &format!("{:?}", on_failure_val),
+        output_file.map(|s| s.as_str()),
+    );
 
-        // Skip resources that have a condition (if) that evaluates to false
-        if let Some(condition) = &resource.r#if {
-            debug!("Resource has condition: {}", condition);
-            // TODO: evaluate the condition here
+    println!("tests complete (dry run: {})", is_dry_run);
+}
+
+/// Main test workflow matching Python's StackQLTestRunner.run().
+fn run_test(
+    runner: &mut CommandRunner,
+    dry_run: bool,
+    show_queries: bool,
+    _on_failure: &str,
+    output_file: Option<&str>,
+) {
+    let start_time = Instant::now();
+
+    info!(
+        "testing [{}] in [{}] environment {}",
+        runner.stack_name,
+        runner.stack_env,
+        if dry_run { "(dry run)" } else { "" }
+    );
+
+    let resources = runner.manifest.resources.clone();
+
+    for resource in &resources {
+        print_unicode_box(
+            &format!("Processing resource: [{}]", resource.name),
+            BorderColor::Blue,
+        );
+
+        let res_type = get_resource_type(resource).to_string();
+
+        if res_type == "query" {
+            info!("exporting variables for [{}]", resource.name);
+        } else if res_type == "resource" || res_type == "multi" {
+            info!("testing resource [{}], type: {}", resource.name, res_type);
+        } else if res_type == "command" {
+            continue;
+        } else {
+            catch_error_and_exit(&format!("unknown resource type: {}", res_type));
         }
 
-        // Get environment-specific property values
-        debug!("Properties for resource {}:", resource.name);
-        for prop in &resource.props {
-            let value = Manifest::get_property_value(prop, args.stack_env);
-            match value {
-                Some(val) => debug!(
-                    " [prop] {}: {}",
-                    prop.name,
-                    serde_json::to_string(val)
-                        .unwrap_or_else(|_| "Error serializing value".to_string())
-                ),
-                None => debug!(
-                    "[prop] {}: <not defined for environment {}>",
-                    prop.name, args.stack_env
-                ),
+        let full_context = runner.get_full_context(resource);
+
+        // Get test queries
+        let (test_queries, inline_query) =
+            if let Some(sql_val) = resource.sql.as_ref().filter(|_| res_type == "query") {
+                let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
+                (HashMap::new(), Some(iq))
+            } else {
+                (runner.get_queries(resource, &full_context), None)
+            };
+
+        let statecheck_query = test_queries.get("statecheck");
+        let statecheck_retries = statecheck_query.map_or(1, |q| q.options.retries);
+        let statecheck_retry_delay = statecheck_query.map_or(0, |q| q.options.retry_delay);
+
+        let mut exports_query_str = test_queries.get("exports").map(|q| q.rendered.clone());
+        let exports_opts = test_queries.get("exports");
+        let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
+        let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
+
+        if res_type == "query" && exports_query_str.is_none() {
+            if let Some(ref iq) = inline_query {
+                exports_query_str = Some(iq.clone());
+            } else {
+                catch_error_and_exit(
+                    "Inline sql must be supplied or an iql file must be present with an 'exports' anchor for query type resources.",
+                );
             }
         }
 
-        // Get the query file path
-        let query_path =
-            manifest.get_resource_query_path(std::path::Path::new(args.stack_dir), resource);
-        debug!("Query file path: {:?}", query_path);
+        // Statecheck with optimizations
+        let mut exports_result_from_proxy: Option<Vec<HashMap<String, String>>> = None;
 
-        // In a real implementation, you would:
-        // 1. Read the query file
-        // 2. Replace property placeholders with actual values
-        // 3. Execute the query against the infrastructure
-        // 4. Verify the results match expectations
+        if res_type == "resource" || res_type == "multi" {
+            let is_correct_state;
 
-        info!("✓ Resource {} passed tests", resource.name);
+            if resource.skip_validation.unwrap_or(false) {
+                info!("Skipping statecheck for {}", resource.name);
+                is_correct_state = true;
+            } else if let Some(sq) = statecheck_query {
+                is_correct_state = runner.check_if_resource_is_correct_state(
+                    resource,
+                    &sq.rendered,
+                    sq.options.retries,
+                    sq.options.retry_delay,
+                    dry_run,
+                    show_queries,
+                );
+            } else if let Some(ref eq_str) = exports_query_str {
+                // OPTIMIZATION: Use exports as statecheck proxy
+                info!(
+                    "using exports query as proxy for statecheck test for [{}]",
+                    resource.name
+                );
+                let (state, proxy) = runner.check_state_using_exports_proxy(
+                    resource,
+                    eq_str,
+                    statecheck_retries,
+                    statecheck_retry_delay,
+                    dry_run,
+                    show_queries,
+                );
+                is_correct_state = state;
+                exports_result_from_proxy = proxy;
+            } else {
+                catch_error_and_exit(
+                    "iql file must include either 'statecheck' or 'exports' anchor for validation.",
+                );
+            }
+
+            if !is_correct_state && !dry_run {
+                catch_error_and_exit(&format!("test failed for {}.", resource.name));
+            }
+        }
+
+        // Exports with optimization
+        if let Some(ref eq_str) = exports_query_str {
+            if let Some(ref proxy_result) = exports_result_from_proxy {
+                if res_type == "resource" || res_type == "multi" {
+                    info!(
+                        "reusing exports result from proxy for [{}]...",
+                        resource.name
+                    );
+                    if !resource.exports.is_empty() {
+                        runner.process_exports_from_result(resource, proxy_result);
+                    }
+                }
+            } else {
+                runner.process_exports(
+                    resource,
+                    &full_context,
+                    eq_str,
+                    exports_retries,
+                    exports_retry_delay,
+                    dry_run,
+                    show_queries,
+                    false,
+                );
+            }
+        }
+
+        if res_type == "resource" && !dry_run {
+            info!("test passed for {}", resource.name);
+        }
     }
 
-    info!("🔍 tests complete (dry run: {})", args.dry_run);
+    let elapsed = start_time.elapsed();
+    let elapsed_str = format!("{:.2?}", elapsed);
+    info!("test completed in {}", elapsed_str);
+
+    if let Some(of) = output_file {
+        runner.process_stack_exports(dry_run, Some(of), &elapsed_str);
+    }
 }

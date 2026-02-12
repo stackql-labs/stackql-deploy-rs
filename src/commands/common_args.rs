@@ -98,6 +98,7 @@ pub fn on_failure() -> Arg {
 
 /// Structure to hold common command arguments
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CommonCommandArgs<'a> {
     /// Directory containing stack configuration
     pub stack_dir: &'a str,
@@ -116,7 +117,8 @@ pub struct CommonCommandArgs<'a> {
 }
 
 /// Create CommonCommandArgs from ArgMatches
-pub fn args_from_matches(matches: &ArgMatches) -> CommonCommandArgs {
+#[allow(dead_code)]
+pub fn args_from_matches(matches: &ArgMatches) -> CommonCommandArgs<'_> {
     CommonCommandArgs {
         stack_dir: matches.get_one::<String>("stack_dir").unwrap(),
         stack_env: matches.get_one::<String>("stack_env").unwrap(),
