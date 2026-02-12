@@ -135,12 +135,8 @@ fn run_test(
 
         // Get test queries
         let (test_queries, inline_query) =
-            if res_type == "query" && resource.sql.is_some() {
-                let iq = runner.render_inline_template(
-                    &resource.name,
-                    resource.sql.as_ref().unwrap(),
-                    &full_context,
-                );
+            if let Some(sql_val) = resource.sql.as_ref().filter(|_| res_type == "query") {
+                let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
                 (HashMap::new(), Some(iq))
             } else {
                 (runner.get_queries(resource, &full_context), None)
@@ -150,9 +146,7 @@ fn run_test(
         let statecheck_retries = statecheck_query.map_or(1, |q| q.options.retries);
         let statecheck_retry_delay = statecheck_query.map_or(0, |q| q.options.retry_delay);
 
-        let mut exports_query_str = test_queries
-            .get("exports")
-            .map(|q| q.rendered.clone());
+        let mut exports_query_str = test_queries.get("exports").map(|q| q.rendered.clone());
         let exports_opts = test_queries.get("exports");
         let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
         let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
@@ -214,18 +208,15 @@ fn run_test(
 
         // Exports with optimization
         if let Some(ref eq_str) = exports_query_str {
-            if exports_result_from_proxy.is_some()
-                && (res_type == "resource" || res_type == "multi")
-            {
-                info!(
-                    "reusing exports result from proxy for [{}]...",
-                    resource.name
-                );
-                if !resource.exports.is_empty() {
-                    runner.process_exports_from_result(
-                        resource,
-                        exports_result_from_proxy.as_ref().unwrap(),
+            if let Some(ref proxy_result) = exports_result_from_proxy {
+                if res_type == "resource" || res_type == "multi" {
+                    info!(
+                        "reusing exports result from proxy for [{}]...",
+                        resource.name
                     );
+                    if !resource.exports.is_empty() {
+                        runner.process_exports_from_result(resource, proxy_result);
+                    }
                 }
             } else {
                 runner.process_exports(

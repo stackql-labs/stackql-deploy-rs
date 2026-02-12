@@ -13,7 +13,9 @@ use std::process;
 use log::{debug, error, info};
 use pgwire_lite::PgwireLite;
 
-use crate::core::config::{get_full_context, render_globals, render_string_value, get_resource_type};
+use crate::core::config::{
+    get_full_context, get_resource_type, render_globals, render_string_value,
+};
 use crate::core::env::load_env_vars;
 use crate::core::templating::{self, ParsedQuery};
 use crate::core::utils::{
@@ -33,6 +35,7 @@ pub struct CommandRunner {
     pub stack_dir: String,
     pub stack_env: String,
     pub stack_name: String,
+    #[allow(dead_code)]
     pub env_vars: HashMap<String, String>,
 }
 
@@ -55,8 +58,7 @@ impl CommandRunner {
         let stack_name = manifest.name.clone();
 
         // Render globals
-        let global_context =
-            render_globals(&engine, &env_vars, &manifest, stack_env, &stack_name);
+        let global_context = render_globals(&engine, &env_vars, &manifest, stack_env, &stack_name);
 
         // Pull providers
         pull_providers(&manifest.providers, &mut client);
@@ -75,10 +77,16 @@ impl CommandRunner {
 
     /// Get the full context for a resource (global + resource properties).
     pub fn get_full_context(&self, resource: &Resource) -> HashMap<String, String> {
-        get_full_context(&self.engine, &self.global_context, resource, &self.stack_env)
+        get_full_context(
+            &self.engine,
+            &self.global_context,
+            resource,
+            &self.stack_env,
+        )
     }
 
     /// Get resource type string, validated.
+    #[allow(dead_code)]
     pub fn get_resource_type(&self, resource: &Resource) -> String {
         get_resource_type(resource).to_string()
     }
@@ -137,6 +145,7 @@ impl CommandRunner {
     }
 
     /// Check if a resource exists using the exists query.
+    #[allow(clippy::too_many_arguments)]
     pub fn check_if_resource_exists(
         &mut self,
         resource: &Resource,
@@ -233,13 +242,7 @@ impl CommandRunner {
         );
         show_query(show_queries, exports_query);
 
-        let result = run_stackql_query(
-            exports_query,
-            &mut self.client,
-            true,
-            retries,
-            retry_delay,
-        );
+        let result = run_stackql_query(exports_query, &mut self.client, true, retries, retry_delay);
 
         let is_correct = check_exports_as_statecheck_proxy(&result);
 
@@ -259,6 +262,7 @@ impl CommandRunner {
     }
 
     /// Create a resource.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_resource(
         &mut self,
         resource: &Resource,
@@ -292,6 +296,7 @@ impl CommandRunner {
     }
 
     /// Update a resource.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_resource(
         &mut self,
         resource: &Resource,
@@ -336,6 +341,7 @@ impl CommandRunner {
     }
 
     /// Delete a resource.
+    #[allow(clippy::too_many_arguments)]
     pub fn delete_resource(
         &mut self,
         resource: &Resource,
@@ -387,6 +393,7 @@ impl CommandRunner {
     }
 
     /// Process exports for a resource.
+    #[allow(clippy::too_many_arguments)]
     pub fn process_exports(
         &mut self,
         resource: &Resource,
@@ -441,13 +448,8 @@ impl CommandRunner {
         info!("exporting variables for [{}]...", resource.name);
         show_query(show_queries, exports_query);
 
-        let exports = run_stackql_query(
-            exports_query,
-            &mut self.client,
-            true,
-            retries,
-            retry_delay,
-        );
+        let exports =
+            run_stackql_query(exports_query, &mut self.client, true, retries, retry_delay);
 
         debug!("Exports result: {:?}", exports);
 
@@ -456,10 +458,7 @@ impl CommandRunner {
                 return;
             }
             show_query(true, exports_query);
-            catch_error_and_exit(&format!(
-                "Exports query failed for {}",
-                resource.name
-            ));
+            catch_error_and_exit(&format!("Exports query failed for {}", resource.name));
         }
 
         // Check for errors
@@ -489,7 +488,13 @@ impl CommandRunner {
             ));
         }
 
-        self.process_export_data(resource, &exports, expected_exports, all_dicts, protected_exports);
+        self.process_export_data(
+            resource,
+            &exports,
+            expected_exports,
+            all_dicts,
+            protected_exports,
+        );
     }
 
     /// Process exports from an already-obtained result (e.g., from exports proxy).
@@ -672,10 +677,7 @@ impl CommandRunner {
                         continue;
                     }
                 }
-                export_data.insert(
-                    var_name.clone(),
-                    serde_json::Value::String(value.clone()),
-                );
+                export_data.insert(var_name.clone(), serde_json::Value::String(value.clone()));
             } else {
                 missing_vars.push(var_name.clone());
             }
@@ -709,7 +711,11 @@ impl CommandRunner {
         // Write JSON file
         let json = serde_json::Value::Object(export_data.clone());
         match fs::write(output_file, serde_json::to_string_pretty(&json).unwrap()) {
-            Ok(_) => info!("Exported {} variables to {}", export_data.len(), output_file),
+            Ok(_) => info!(
+                "Exported {} variables to {}",
+                export_data.len(),
+                output_file
+            ),
             Err(e) => catch_error_and_exit(&format!(
                 "Failed to write exports file {}: {}",
                 output_file, e
@@ -782,6 +788,7 @@ fn evaluate_simple_condition(condition: &str) -> Option<bool> {
 }
 
 /// Helper to get export names as strings from YAML values.
+#[allow(dead_code)]
 pub fn get_export_names(exports: &[serde_yaml::Value]) -> Vec<String> {
     exports
         .iter()

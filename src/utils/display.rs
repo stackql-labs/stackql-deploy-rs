@@ -96,6 +96,7 @@ macro_rules! print_success {
 }
 
 /// Log common command arguments at debug level
+#[allow(dead_code)]
 pub fn log_common_command_args(args: &CommonCommandArgs, matches: &ArgMatches) {
     debug!("Stack Directory: {}", args.stack_dir);
     debug!("Stack Environment: {}", args.stack_env);

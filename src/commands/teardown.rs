@@ -85,11 +85,7 @@ pub fn execute(matches: &ArgMatches) {
 }
 
 /// Collect exports for all resources before teardown.
-fn collect_exports(
-    runner: &mut CommandRunner,
-    show_queries: bool,
-    dry_run: bool,
-) {
+fn collect_exports(runner: &mut CommandRunner, show_queries: bool, dry_run: bool) {
     info!(
         "collecting exports for [{}] in [{}] environment",
         runner.stack_name, runner.stack_env
@@ -108,12 +104,8 @@ fn collect_exports(
         }
 
         let (exports_query, exports_retries, exports_retry_delay) =
-            if res_type == "query" && resource.sql.is_some() {
-                let iq = runner.render_inline_template(
-                    &resource.name,
-                    resource.sql.as_ref().unwrap(),
-                    &full_context,
-                );
+            if let Some(sql_val) = resource.sql.as_ref().filter(|_| res_type == "query") {
+                let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
                 (Some(iq), 1u32, 0u32)
             } else {
                 let queries = runner.get_queries(resource, &full_context);
@@ -144,12 +136,7 @@ fn collect_exports(
 }
 
 /// Main teardown workflow matching Python's StackQLDeProvisioner.run().
-fn run_teardown(
-    runner: &mut CommandRunner,
-    dry_run: bool,
-    show_queries: bool,
-    _on_failure: &str,
-) {
+fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _on_failure: &str) {
     let start_time = Instant::now();
 
     info!(
@@ -163,7 +150,13 @@ fn run_teardown(
     collect_exports(runner, show_queries, dry_run);
 
     // Process resources in reverse order
-    let resources: Vec<_> = runner.manifest.resources.clone().into_iter().rev().collect();
+    let resources: Vec<_> = runner
+        .manifest
+        .resources
+        .clone()
+        .into_iter()
+        .rev()
+        .collect();
 
     for resource in &resources {
         print_unicode_box(
@@ -208,39 +201,48 @@ fn run_teardown(
         let resource_queries = runner.get_queries(resource, &full_context);
 
         // Get exists query (fallback to statecheck)
-        let (exists_query_str, exists_retries, exists_retry_delay, postdelete_retries, postdelete_retry_delay) =
-            if let Some(eq) = resource_queries.get("exists") {
-                (
-                    eq.rendered.clone(),
-                    eq.options.retries,
-                    eq.options.retry_delay,
-                    eq.options.postdelete_retries,
-                    eq.options.postdelete_retry_delay,
-                )
-            } else if let Some(sq) = resource_queries.get("statecheck") {
-                info!(
-                    "exists query not defined for [{}], trying statecheck query as exists query.",
-                    resource.name
-                );
-                (
-                    sq.rendered.clone(),
-                    sq.options.retries,
-                    sq.options.retry_delay,
-                    sq.options.postdelete_retries,
-                    sq.options.postdelete_retry_delay,
-                )
-            } else {
-                info!(
-                    "No exists or statecheck query for [{}], skipping...",
-                    resource.name
-                );
-                continue;
-            };
+        let (
+            exists_query_str,
+            exists_retries,
+            exists_retry_delay,
+            postdelete_retries,
+            postdelete_retry_delay,
+        ) = if let Some(eq) = resource_queries.get("exists") {
+            (
+                eq.rendered.clone(),
+                eq.options.retries,
+                eq.options.retry_delay,
+                eq.options.postdelete_retries,
+                eq.options.postdelete_retry_delay,
+            )
+        } else if let Some(sq) = resource_queries.get("statecheck") {
+            info!(
+                "exists query not defined for [{}], trying statecheck query as exists query.",
+                resource.name
+            );
+            (
+                sq.rendered.clone(),
+                sq.options.retries,
+                sq.options.retry_delay,
+                sq.options.postdelete_retries,
+                sq.options.postdelete_retry_delay,
+            )
+        } else {
+            info!(
+                "No exists or statecheck query for [{}], skipping...",
+                resource.name
+            );
+            continue;
+        };
 
         // Get delete query
         let (delete_query, delete_retries, delete_retry_delay) =
             if let Some(dq) = resource_queries.get("delete") {
-                (dq.rendered.clone(), dq.options.retries, dq.options.retry_delay)
+                (
+                    dq.rendered.clone(),
+                    dq.options.retries,
+                    dq.options.retry_delay,
+                )
             } else {
                 info!(
                     "delete query not defined for [{}], skipping...",

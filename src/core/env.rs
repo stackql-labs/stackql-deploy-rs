@@ -24,11 +24,9 @@ pub fn load_env_vars(env_file: &str, overrides: &[String]) -> HashMap<String, St
         debug!("Loading environment variables from: {}", env_file);
         match dotenvy::from_path_iter(dotenv_path) {
             Ok(iter) => {
-                for item in iter {
-                    if let Ok((key, value)) = item {
-                        debug!("  Loaded env var: {}", key);
-                        env_vars.insert(key, value);
-                    }
+                for (key, value) in iter.flatten() {
+                    debug!("  Loaded env var: {}", key);
+                    env_vars.insert(key, value);
                 }
             }
             Err(e) => {

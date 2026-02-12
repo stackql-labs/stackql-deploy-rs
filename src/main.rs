@@ -24,9 +24,9 @@
 
 mod app;
 mod commands;
+pub mod core;
 mod error;
 mod globals;
-pub mod core;
 mod resource;
 mod template;
 mod utils;

@@ -37,7 +37,10 @@ pub fn command() -> Command {
 
 /// Executes the `shell` command, launching an interactive query interface.
 pub fn execute(_matches: &ArgMatches) {
-    print_unicode_box("Launching interactive shell...", crate::utils::display::BorderColor::Cyan);
+    print_unicode_box(
+        "Launching interactive shell...",
+        crate::utils::display::BorderColor::Cyan,
+    );
 
     let host = server_host();
     let port = server_port();

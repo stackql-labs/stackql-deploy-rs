@@ -124,7 +124,10 @@ fn run_build(
         );
 
         let res_type = get_resource_type(resource).to_string();
-        info!("processing resource [{}], type: {}", resource.name, res_type);
+        info!(
+            "processing resource [{}], type: {}",
+            resource.name, res_type
+        );
 
         let full_context = runner.get_full_context(resource);
 
@@ -140,17 +143,16 @@ fn run_build(
         }
 
         // Get resource queries
-        let (resource_queries, inline_query) =
-            if (res_type == "command" || res_type == "query") && resource.sql.is_some() {
-                let iq = runner.render_inline_template(
-                    &resource.name,
-                    resource.sql.as_ref().unwrap(),
-                    &full_context,
-                );
-                (HashMap::new(), Some(iq))
-            } else {
-                (runner.get_queries(resource, &full_context), None)
-            };
+        let (resource_queries, inline_query) = if let Some(sql_val) = resource
+            .sql
+            .as_ref()
+            .filter(|_| res_type == "command" || res_type == "query")
+        {
+            let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
+            (HashMap::new(), Some(iq))
+        } else {
+            (runner.get_queries(resource, &full_context), None)
+        };
 
         // Provisioning queries for resource/multi types
         let mut create_query: Option<String> = None;
@@ -193,9 +195,8 @@ fn run_build(
         // Test queries
         let exists_query = resource_queries.get("exists");
         let statecheck_query = resource_queries.get("statecheck");
-        let mut exports_query_str: Option<String> = resource_queries
-            .get("exports")
-            .map(|q| q.rendered.clone());
+        let mut exports_query_str: Option<String> =
+            resource_queries.get("exports").map(|q| q.rendered.clone());
         let exports_opts = resource_queries.get("exports");
         let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
         let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
@@ -267,15 +268,19 @@ fn run_build(
                         );
                     }
                 }
-            } else if exports_query_str.is_some() {
+            } else if let Some(eq_str) = exports_query_str.as_ref() {
                 // Flow 2: Optimized flow using exports as proxy
                 info!(
                     "trying exports query first (fast-fail) for optimal validation for [{}]",
                     resource.name
                 );
-                let eq_str = exports_query_str.as_ref().unwrap();
                 let (state, proxy_result) = runner.check_state_using_exports_proxy(
-                    resource, eq_str, 1, 0, dry_run, show_queries,
+                    resource,
+                    eq_str,
+                    1,
+                    0,
+                    dry_run,
+                    show_queries,
                 );
                 is_correct_state = state;
                 resource_exists = is_correct_state;
@@ -367,12 +372,13 @@ fn run_build(
                         "using exports query as post-deploy statecheck for [{}]",
                         resource.name
                     );
-                    let post_retries = if statecheck_query.map_or(false, |sq| sq.options.retries > 1) {
+                    let post_retries = if statecheck_query.is_some_and(|sq| sq.options.retries > 1)
+                    {
                         statecheck_query.unwrap().options.retries
                     } else {
                         exports_retries
                     };
-                    let post_delay = if statecheck_query.map_or(false, |sq| sq.options.retries > 1) {
+                    let post_delay = if statecheck_query.is_some_and(|sq| sq.options.retries > 1) {
                         statecheck_query.unwrap().options.retry_delay
                     } else {
                         exports_retry_delay
@@ -403,16 +409,21 @@ fn run_build(
 
         // Handle command type
         if res_type == "command" {
-            let (command_query, command_retries, command_retry_delay) =
-                if let Some(ref iq) = inline_query {
-                    (iq.clone(), 1u32, 0u32)
-                } else if let Some(cq) = resource_queries.get("command") {
-                    (cq.rendered.clone(), cq.options.retries, cq.options.retry_delay)
-                } else {
-                    catch_error_and_exit(
+            let (command_query, command_retries, command_retry_delay) = if let Some(ref iq) =
+                inline_query
+            {
+                (iq.clone(), 1u32, 0u32)
+            } else if let Some(cq) = resource_queries.get("command") {
+                (
+                    cq.rendered.clone(),
+                    cq.options.retries,
+                    cq.options.retry_delay,
+                )
+            } else {
+                catch_error_and_exit(
                         "'sql' should be defined in the resource or the 'command' anchor needs to be supplied in the corresponding iql file for command type resources.",
                     );
-                };
+            };
 
             runner.run_command(
                 &command_query,
@@ -425,18 +436,15 @@ fn run_build(
 
         // Process exports with optimization
         if let Some(ref eq_str) = exports_query_str {
-            if exports_result_from_proxy.is_some()
-                && (res_type == "resource" || res_type == "multi")
-            {
-                info!(
-                    "reusing exports result from proxy for [{}]...",
-                    resource.name
-                );
-                if !resource.exports.is_empty() {
-                    runner.process_exports_from_result(
-                        resource,
-                        exports_result_from_proxy.as_ref().unwrap(),
+            if let Some(ref proxy_result) = exports_result_from_proxy {
+                if res_type == "resource" || res_type == "multi" {
+                    info!(
+                        "reusing exports result from proxy for [{}]...",
+                        resource.name
                     );
+                    if !resource.exports.is_empty() {
+                        runner.process_exports_from_result(resource, proxy_result);
+                    }
                 }
             } else {
                 runner.process_exports(

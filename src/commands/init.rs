@@ -102,7 +102,10 @@ pub fn command() -> Command {
 
 /// Executes the `init` command to initialize a new project structure.
 pub fn execute(matches: &ArgMatches) {
-    print_unicode_box("Initializing new project...", crate::utils::display::BorderColor::Yellow);
+    print_unicode_box(
+        "Initializing new project...",
+        crate::utils::display::BorderColor::Yellow,
+    );
 
     let stack_name = matches
         .get_one::<String>("stack_name")

@@ -46,7 +46,9 @@ pub fn run_stackql_query(
         match execute_query(query, client) {
             Ok(result) => match result {
                 QueryResult::Data {
-                    columns, rows, notices,
+                    columns,
+                    rows,
+                    notices,
                 } => {
                     // Check for error notices
                     for notice in &notices {
@@ -72,8 +74,7 @@ pub fn run_stackql_query(
                     }
 
                     // Convert to Vec<HashMap>
-                    let col_names: Vec<String> =
-                        columns.iter().map(|c| c.name.clone()).collect();
+                    let col_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
 
                     let result_maps: Vec<HashMap<String, String>> = rows
                         .iter()
@@ -112,10 +113,7 @@ pub fn run_stackql_query(
 
                         // Check for count query
                         if let Some(count_str) = result_maps[0].get("count") {
-                            debug!(
-                                "Stackql query executed successfully, count: {}",
-                                count_str
-                            );
+                            debug!("Stackql query executed successfully, count: {}", count_str);
                             if let Ok(count) = count_str.parse::<i64>() {
                                 if count > 1 {
                                     catch_error_and_exit(&format!(
@@ -167,7 +165,10 @@ pub fn run_stackql_query(
         attempt += 1;
     }
 
-    debug!("All attempts ({}) to execute the query completed.", retries + 1);
+    debug!(
+        "All attempts ({}) to execute the query completed.",
+        retries + 1
+    );
 
     // If suppress_errors and we have an error, return error marker
     if suppress_errors {
@@ -221,22 +222,20 @@ pub fn run_stackql_command(
                 QueryResult::Data { notices, .. } => {
                     // Check for errors in notices
                     for notice in &notices {
-                        if error_detected_in_notice(notice) {
-                            if !ignore_errors {
-                                if attempt < retries {
-                                    warn!(
+                        if error_detected_in_notice(notice) && !ignore_errors {
+                            if attempt < retries {
+                                warn!(
                                         "Dependent resource(s) may not be ready, retrying in {} seconds (attempt {} of {})...",
                                         retry_delay, attempt + 1, retries + 1
                                     );
-                                    thread::sleep(Duration::from_secs(retry_delay as u64));
-                                    attempt += 1;
-                                    continue;
-                                } else {
-                                    catch_error_and_exit(&format!(
-                                        "Error during stackql command execution:\n\n{}\n",
-                                        notice
-                                    ));
-                                }
+                                thread::sleep(Duration::from_secs(retry_delay as u64));
+                                attempt += 1;
+                                continue;
+                            } else {
+                                catch_error_and_exit(&format!(
+                                    "Error during stackql command execution:\n\n{}\n",
+                                    notice
+                                ));
                             }
                         }
                     }
@@ -333,17 +332,15 @@ pub fn run_test(
                     );
                     return false;
                 }
+            } else if count == 1 {
+                debug!("Test result true for [{}]", resource_name);
+                return true;
             } else {
-                if count == 1 {
-                    debug!("Test result true for [{}]", resource_name);
-                    return true;
-                } else {
-                    debug!(
-                        "Test result false for [{}], expected 1 got {}",
-                        resource_name, count
-                    );
-                    return false;
-                }
+                debug!(
+                    "Test result false for [{}], expected 1 got {}",
+                    resource_name, count
+                );
+                return false;
             }
         }
     }
@@ -409,8 +406,8 @@ pub fn pull_providers(providers: &[String], client: &mut PgwireLite) {
             let version = parts[1];
 
             let found = installed.iter().any(|p| {
-                p.get("name").map_or(false, |n| n == name)
-                    && p.get("version").map_or(false, |v| v == version)
+                p.get("name").is_some_and(|n| n == name)
+                    && p.get("version").is_some_and(|v| v == version)
             });
 
             if found {
@@ -418,13 +415,16 @@ pub fn pull_providers(providers: &[String], client: &mut PgwireLite) {
             } else {
                 // Check if a higher version is installed
                 let higher_installed = installed.iter().any(|p| {
-                    p.get("name").map_or(false, |n| n == name)
+                    p.get("name").is_some_and(|n| n == name)
                         && p.get("version")
-                            .map_or(false, |v| is_version_higher(v, version))
+                            .is_some_and(|v| is_version_higher(v, version))
                 });
 
                 if higher_installed {
-                    info!("Provider '{}' - a higher version is already installed.", provider);
+                    info!(
+                        "Provider '{}' - a higher version is already installed.",
+                        provider
+                    );
                 } else {
                     info!("Pulling provider '{}'...", provider);
                     let cmd = format!("REGISTRY PULL {}", provider);
@@ -435,9 +435,7 @@ pub fn pull_providers(providers: &[String], client: &mut PgwireLite) {
                 }
             }
         } else {
-            let found = installed
-                .iter()
-                .any(|p| p.get("name").map_or(false, |n| n == provider));
+            let found = installed.iter().any(|p| p.get("name") == Some(provider));
 
             if found {
                 info!("Provider '{}' is already installed.", provider);
@@ -455,12 +453,7 @@ pub fn pull_providers(providers: &[String], client: &mut PgwireLite) {
 
 /// Compare version strings. Returns true if installed > requested.
 fn is_version_higher(installed: &str, requested: &str) -> bool {
-    let parse = |v: &str| -> u64 {
-        v.replace('v', "")
-            .replace('.', "")
-            .parse::<u64>()
-            .unwrap_or(0)
-    };
+    let parse = |v: &str| -> u64 { v.replace(['v', '.'], "").parse::<u64>().unwrap_or(0) };
     parse(installed) > parse(requested)
 }
 
@@ -486,9 +479,7 @@ pub fn export_vars(
 /// Check if exports result can serve as a statecheck proxy.
 /// Returns true if result is non-empty and has no errors.
 /// Matches Python's `check_exports_as_statecheck_proxy`.
-pub fn check_exports_as_statecheck_proxy(
-    exports_result: &[HashMap<String, String>],
-) -> bool {
+pub fn check_exports_as_statecheck_proxy(exports_result: &[HashMap<String, String>]) -> bool {
     debug!(
         "Checking exports result as statecheck proxy: {} rows",
         exports_result.len()
@@ -531,11 +522,7 @@ pub fn run_ext_script(
 ) -> Option<HashMap<String, String>> {
     debug!("Running external script: {}", cmd);
 
-    let output = match std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .output()
-    {
+    let output = match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
         Ok(output) => output,
         Err(e) => {
             catch_error_and_exit(&format!("Script failed: {}", e));

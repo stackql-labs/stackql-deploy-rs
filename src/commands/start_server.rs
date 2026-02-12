@@ -64,7 +64,10 @@ pub fn command() -> Command {
 
 /// Executes the `start-server` command.
 pub fn execute(matches: &ArgMatches) {
-    print_unicode_box("Starting stackql server...", crate::utils::display::BorderColor::Yellow);
+    print_unicode_box(
+        "Starting stackql server...",
+        crate::utils::display::BorderColor::Yellow,
+    );
 
     // Use global vars for host and port
     let port = server_port();

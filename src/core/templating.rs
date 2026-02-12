@@ -53,7 +53,12 @@ fn parse_anchor(anchor: &str) -> (String, HashMap<String, u32>) {
 
 /// Load SQL queries from a .iql file, split by anchors.
 /// Matches Python's `load_sql_queries`.
-fn load_sql_queries(file_path: &Path) -> (HashMap<String, String>, HashMap<String, HashMap<String, u32>>) {
+fn load_sql_queries(
+    file_path: &Path,
+) -> (
+    HashMap<String, String>,
+    HashMap<String, HashMap<String, u32>>,
+) {
     let content = match fs::read_to_string(file_path) {
         Ok(c) => c,
         Err(e) => {
@@ -73,7 +78,10 @@ fn load_sql_queries(file_path: &Path) -> (HashMap<String, String>, HashMap<Strin
             if let Some(ref anchor) = current_anchor {
                 if !query_buffer.is_empty() {
                     let (anchor_key, anchor_options) = parse_anchor(anchor);
-                    queries.insert(anchor_key.clone(), query_buffer.join("\n").trim().to_string());
+                    queries.insert(
+                        anchor_key.clone(),
+                        query_buffer.join("\n").trim().to_string(),
+                    );
                     options.insert(anchor_key, anchor_options);
                     query_buffer.clear();
                 }
@@ -91,7 +99,10 @@ fn load_sql_queries(file_path: &Path) -> (HashMap<String, String>, HashMap<Strin
     if let Some(ref anchor) = current_anchor {
         if !query_buffer.is_empty() {
             let (anchor_key, anchor_options) = parse_anchor(anchor);
-            queries.insert(anchor_key.clone(), query_buffer.join("\n").trim().to_string());
+            queries.insert(
+                anchor_key.clone(),
+                query_buffer.join("\n").trim().to_string(),
+            );
             options.insert(anchor_key, anchor_options);
         }
     }
@@ -117,17 +128,11 @@ fn render_queries(
 
         match engine.render(query, &temp_context) {
             Ok(rendered) => {
-                debug!(
-                    "[{}] [{}] rendered query:\n\n{}\n",
-                    res_name, key, rendered
-                );
+                debug!("[{}] [{}] rendered query:\n\n{}\n", res_name, key, rendered);
                 rendered_queries.insert(key.clone(), rendered);
             }
             Err(e) => {
-                error!(
-                    "Error rendering query for [{}] [{}]: {}",
-                    res_name, key, e
-                );
+                error!("Error rendering query for [{}] [{}]: {}", res_name, key, e);
                 process::exit(1);
             }
         }

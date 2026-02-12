@@ -48,6 +48,7 @@ pub type TemplateResult<T> = Result<T, TemplateError>;
 /// A structure that renders templates using Tera (Jinja2-compatible).
 #[derive(Debug)]
 pub struct TemplateEngine {
+    #[allow(dead_code)]
     tera: Tera,
 }
 
@@ -332,7 +333,9 @@ mod tests {
         context.insert("first".to_string(), "Hello".to_string());
         context.insert("second".to_string(), "World".to_string());
 
-        let result = engine.render("{{ first }} {{ second }}!", &context).unwrap();
+        let result = engine
+            .render("{{ first }} {{ second }}!", &context)
+            .unwrap();
         assert_eq!(result, "Hello World!");
     }
 

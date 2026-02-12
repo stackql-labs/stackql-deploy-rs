@@ -32,8 +32,7 @@ pub fn to_sql_compatible_value(value: &YamlValue) -> String {
         YamlValue::String(s) => s.clone(),
         YamlValue::Sequence(_) | YamlValue::Mapping(_) => {
             // Convert complex types to JSON strings
-            let json_val: JsonValue =
-                serde_json::to_value(value).unwrap_or(JsonValue::Null);
+            let json_val: JsonValue = serde_json::to_value(value).unwrap_or(JsonValue::Null);
             serde_json::to_string(&json_val).unwrap_or_default()
         }
         _ => String::new(),
@@ -66,10 +65,7 @@ pub fn render_value(
             match engine.render(s, context) {
                 Ok(rendered) => {
                     // Normalize booleans
-                    let normalized = rendered
-                        .replace("True", "true")
-                        .replace("False", "false");
-                    normalized
+                    rendered.replace("True", "true").replace("False", "false")
                 }
                 Err(e) => {
                     debug!("Warning rendering template: {}", e);
@@ -128,9 +124,7 @@ pub fn render_string_value(
     context: &HashMap<String, String>,
 ) -> String {
     match engine.render(value, context) {
-        Ok(rendered) => rendered
-            .replace("True", "true")
-            .replace("False", "false"),
+        Ok(rendered) => rendered.replace("True", "true").replace("False", "false"),
         Err(e) => {
             debug!("Warning rendering template string: {}", e);
             value.to_string()
@@ -163,10 +157,7 @@ pub fn render_globals(
         let rendered = render_value(engine, &global_var.value, &combined_context);
 
         if rendered.is_empty() {
-            error!(
-                "Global variable '{}' cannot be empty",
-                global_var.name
-            );
+            error!("Global variable '{}' cannot be empty", global_var.name);
             process::exit(1);
         }
 
@@ -244,8 +235,7 @@ pub fn render_properties(
                                     .map(|v| serde_json::to_string(v).unwrap_or_default())
                                     .collect();
                                 for item in merge_arr {
-                                    let key =
-                                        serde_json::to_string(item).unwrap_or_default();
+                                    let key = serde_json::to_string(item).unwrap_or_default();
                                     if !base_set.contains(&key) {
                                         merged.push(item.clone());
                                     }
@@ -272,17 +262,11 @@ pub fn render_properties(
                             }
                         }
                     } else {
-                        error!(
-                            "Merge item '{}' value is not valid JSON",
-                            merge_item
-                        );
+                        error!("Merge item '{}' value is not valid JSON", merge_item);
                         process::exit(1);
                     }
                 } else {
-                    error!(
-                        "Merge item '{}' not found in context",
-                        merge_item
-                    );
+                    error!("Merge item '{}' not found in context", merge_item);
                     process::exit(1);
                 }
             }
