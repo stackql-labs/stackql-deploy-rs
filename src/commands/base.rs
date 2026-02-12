@@ -144,6 +144,17 @@ impl CommandRunner {
         templating::render_inline_template(&self.engine, resource_name, sql, full_context)
     }
 
+    /// Render a single query template JIT with the current context.
+    pub fn render_query(
+        &self,
+        resource_name: &str,
+        anchor: &str,
+        template: &str,
+        full_context: &HashMap<String, String>,
+    ) -> String {
+        templating::render_query(&self.engine, resource_name, anchor, template, full_context)
+    }
+
     /// Check if a resource exists using the exists query.
     #[allow(clippy::too_many_arguments)]
     pub fn check_if_resource_exists(

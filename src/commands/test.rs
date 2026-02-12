@@ -131,7 +131,7 @@ fn run_test(
 
         let full_context = runner.get_full_context(resource);
 
-        // Get test queries
+        // Get test queries (templates only, not yet rendered)
         let (test_queries, inline_query) =
             if let Some(sql_val) = resource.sql.as_ref().filter(|_| res_type == "query") {
                 let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
@@ -140,11 +140,23 @@ fn run_test(
                 (runner.get_queries(resource, &full_context), None)
             };
 
-        let statecheck_query = test_queries.get("statecheck");
-        let statecheck_retries = statecheck_query.map_or(1, |q| q.options.retries);
-        let statecheck_retry_delay = statecheck_query.map_or(0, |q| q.options.retry_delay);
+        // Render statecheck JIT if present
+        let statecheck_rendered = test_queries.get("statecheck").map(|q| {
+            let rendered =
+                runner.render_query(&resource.name, "statecheck", &q.template, &full_context);
+            (rendered, q.options.clone())
+        });
+        let statecheck_retries = test_queries
+            .get("statecheck")
+            .map_or(1, |q| q.options.retries);
+        let statecheck_retry_delay = test_queries
+            .get("statecheck")
+            .map_or(0, |q| q.options.retry_delay);
 
-        let mut exports_query_str = test_queries.get("exports").map(|q| q.rendered.clone());
+        // Render exports JIT if present
+        let mut exports_query_str = test_queries
+            .get("exports")
+            .map(|q| runner.render_query(&resource.name, "exports", &q.template, &full_context));
         let exports_opts = test_queries.get("exports");
         let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
         let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
@@ -168,12 +180,12 @@ fn run_test(
             if resource.skip_validation.unwrap_or(false) {
                 info!("Skipping statecheck for {}", resource.name);
                 is_correct_state = true;
-            } else if let Some(sq) = statecheck_query {
+            } else if let Some(ref sq) = statecheck_rendered {
                 is_correct_state = runner.check_if_resource_is_correct_state(
                     resource,
-                    &sq.rendered,
-                    sq.options.retries,
-                    sq.options.retry_delay,
+                    &sq.0,
+                    sq.1.retries,
+                    sq.1.retry_delay,
                     dry_run,
                     show_queries,
                 );

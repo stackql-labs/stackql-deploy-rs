@@ -108,11 +108,9 @@ fn collect_exports(runner: &mut CommandRunner, show_queries: bool, dry_run: bool
             } else {
                 let queries = runner.get_queries(resource, &full_context);
                 if let Some(eq) = queries.get("exports") {
-                    (
-                        Some(eq.rendered.clone()),
-                        eq.options.retries,
-                        eq.options.retry_delay,
-                    )
+                    let rendered =
+                        runner.render_query(&resource.name, "exports", &eq.template, &full_context);
+                    (Some(rendered), eq.options.retries, eq.options.retry_delay)
                 } else {
                     (None, 1u32, 0u32)
                 }
@@ -195,10 +193,10 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
             }
         }
 
-        // Get resource queries
+        // Get resource queries (templates only)
         let resource_queries = runner.get_queries(resource, &full_context);
 
-        // Get exists query (fallback to statecheck)
+        // Get exists query (fallback to statecheck) - render JIT
         let (
             exists_query_str,
             exists_retries,
@@ -206,8 +204,10 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
             postdelete_retries,
             postdelete_retry_delay,
         ) = if let Some(eq) = resource_queries.get("exists") {
+            let rendered =
+                runner.render_query(&resource.name, "exists", &eq.template, &full_context);
             (
-                eq.rendered.clone(),
+                rendered,
                 eq.options.retries,
                 eq.options.retry_delay,
                 eq.options.postdelete_retries,
@@ -218,8 +218,10 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
                 "exists query not defined for [{}], trying statecheck query as exists query.",
                 resource.name
             );
+            let rendered =
+                runner.render_query(&resource.name, "statecheck", &sq.template, &full_context);
             (
-                sq.rendered.clone(),
+                rendered,
                 sq.options.retries,
                 sq.options.retry_delay,
                 sq.options.postdelete_retries,
@@ -233,14 +235,12 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
             continue;
         };
 
-        // Get delete query
+        // Get delete query - render JIT
         let (delete_query, delete_retries, delete_retry_delay) =
             if let Some(dq) = resource_queries.get("delete") {
-                (
-                    dq.rendered.clone(),
-                    dq.options.retries,
-                    dq.options.retry_delay,
-                )
+                let rendered =
+                    runner.render_query(&resource.name, "delete", &dq.template, &full_context);
+                (rendered, dq.options.retries, dq.options.retry_delay)
             } else {
                 info!(
                     "delete query not defined for [{}], skipping...",
