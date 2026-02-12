@@ -140,7 +140,7 @@ fn run_build(
             continue;
         }
 
-        // Get resource queries
+        // Get resource queries (templates only, not yet rendered)
         let (resource_queries, inline_query) = if let Some(sql_val) = resource
             .sql
             .as_ref()
@@ -164,20 +164,36 @@ fn run_build(
         if res_type == "resource" || res_type == "multi" {
             if let Some(cou) = resource_queries.get("createorupdate") {
                 has_createorupdate = true;
-                create_query = Some(cou.rendered.clone());
+                let rendered = runner.render_query(
+                    &resource.name,
+                    "createorupdate",
+                    &cou.template,
+                    &full_context,
+                );
+                create_query = Some(rendered.clone());
                 create_retries = cou.options.retries;
                 create_retry_delay = cou.options.retry_delay;
-                update_query = Some(cou.rendered.clone());
+                update_query = Some(rendered);
                 update_retries = cou.options.retries;
                 update_retry_delay = cou.options.retry_delay;
             } else {
                 if let Some(cq) = resource_queries.get("create") {
-                    create_query = Some(cq.rendered.clone());
+                    create_query = Some(runner.render_query(
+                        &resource.name,
+                        "create",
+                        &cq.template,
+                        &full_context,
+                    ));
                     create_retries = cq.options.retries;
                     create_retry_delay = cq.options.retry_delay;
                 }
                 if let Some(uq) = resource_queries.get("update") {
-                    update_query = Some(uq.rendered.clone());
+                    update_query = Some(runner.render_query(
+                        &resource.name,
+                        "update",
+                        &uq.template,
+                        &full_context,
+                    ));
                     update_retries = uq.options.retries;
                     update_retry_delay = uq.options.retry_delay;
                 }
@@ -190,11 +206,20 @@ fn run_build(
             }
         }
 
-        // Test queries
-        let exists_query = resource_queries.get("exists");
-        let statecheck_query = resource_queries.get("statecheck");
-        let mut exports_query_str: Option<String> =
-            resource_queries.get("exports").map(|q| q.rendered.clone());
+        // Test queries - render only the ones we need
+        let exists_query = resource_queries.get("exists").map(|q| {
+            let rendered =
+                runner.render_query(&resource.name, "exists", &q.template, &full_context);
+            (rendered, q.options.clone())
+        });
+        let statecheck_query = resource_queries.get("statecheck").map(|q| {
+            let rendered =
+                runner.render_query(&resource.name, "statecheck", &q.template, &full_context);
+            (rendered, q.options.clone())
+        });
+        let mut exports_query_str: Option<String> = resource_queries
+            .get("exports")
+            .map(|q| runner.render_query(&resource.name, "exports", &q.template, &full_context));
         let exports_opts = resource_queries.get("exports");
         let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
         let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
@@ -222,24 +247,26 @@ fn run_build(
                 // Skip all existence and state checks for createorupdate
             } else if statecheck_query.is_some() {
                 // Flow 1: Traditional flow when statecheck exists
-                if let Some(eq) = exists_query {
+                if let Some(ref eq) = exists_query {
+                    let eq_opts = resource_queries.get("exists").unwrap();
                     resource_exists = runner.check_if_resource_exists(
                         resource,
-                        &eq.rendered,
-                        eq.options.retries,
-                        eq.options.retry_delay,
+                        &eq.0,
+                        eq_opts.options.retries,
+                        eq_opts.options.retry_delay,
                         dry_run,
                         show_queries,
                         false,
                     );
                 } else {
                     // Use statecheck as exists check
-                    let sq = statecheck_query.unwrap();
+                    let sq = statecheck_query.as_ref().unwrap();
+                    let sq_opts = resource_queries.get("statecheck").unwrap();
                     is_correct_state = runner.check_if_resource_is_correct_state(
                         resource,
-                        &sq.rendered,
-                        sq.options.retries,
-                        sq.options.retry_delay,
+                        &sq.0,
+                        sq_opts.options.retries,
+                        sq_opts.options.retry_delay,
                         dry_run,
                         show_queries,
                     );
@@ -255,18 +282,19 @@ fn run_build(
                         );
                         is_correct_state = true;
                     } else {
-                        let sq = statecheck_query.unwrap();
+                        let sq = statecheck_query.as_ref().unwrap();
+                        let sq_opts = resource_queries.get("statecheck").unwrap();
                         is_correct_state = runner.check_if_resource_is_correct_state(
                             resource,
-                            &sq.rendered,
-                            sq.options.retries,
-                            sq.options.retry_delay,
+                            &sq.0,
+                            sq_opts.options.retries,
+                            sq_opts.options.retry_delay,
                             dry_run,
                             show_queries,
                         );
                     }
                 }
-            } else if let Some(eq_str) = exports_query_str.as_ref() {
+            } else if let Some(ref eq_str) = exports_query_str {
                 // Flow 2: Optimized flow using exports as proxy
                 info!(
                     "trying exports query first (fast-fail) for optimal validation for [{}]",
@@ -296,12 +324,13 @@ fn run_build(
                     );
                     exports_result_from_proxy = None;
 
-                    if let Some(eq) = exists_query {
+                    if let Some(ref eq) = exists_query {
+                        let eq_opts = resource_queries.get("exists").unwrap();
                         resource_exists = runner.check_if_resource_exists(
                             resource,
-                            &eq.rendered,
-                            eq.options.retries,
-                            eq.options.retry_delay,
+                            &eq.0,
+                            eq_opts.options.retries,
+                            eq_opts.options.retry_delay,
                             dry_run,
                             show_queries,
                             false,
@@ -310,13 +339,14 @@ fn run_build(
                         resource_exists = false;
                     }
                 }
-            } else if let Some(eq) = exists_query {
+            } else if let Some(ref eq) = exists_query {
                 // Flow 3: Basic flow with only exists query
+                let eq_opts = resource_queries.get("exists").unwrap();
                 resource_exists = runner.check_if_resource_exists(
                     resource,
-                    &eq.rendered,
-                    eq.options.retries,
-                    eq.options.retry_delay,
+                    &eq.0,
+                    eq_opts.options.retries,
+                    eq_opts.options.retry_delay,
                     dry_run,
                     show_queries,
                     false,
@@ -356,12 +386,13 @@ fn run_build(
 
             // Post-deploy state check
             if is_created_or_updated {
-                if let Some(sq) = statecheck_query {
+                if let Some(ref sq) = statecheck_query {
+                    let sq_opts = resource_queries.get("statecheck").unwrap();
                     is_correct_state = runner.check_if_resource_is_correct_state(
                         resource,
-                        &sq.rendered,
-                        sq.options.retries,
-                        sq.options.retry_delay,
+                        &sq.0,
+                        sq_opts.options.retries,
+                        sq_opts.options.retry_delay,
                         dry_run,
                         show_queries,
                     );
@@ -370,17 +401,8 @@ fn run_build(
                         "using exports query as post-deploy statecheck for [{}]",
                         resource.name
                     );
-                    let post_retries = if statecheck_query.is_some_and(|sq| sq.options.retries > 1)
-                    {
-                        statecheck_query.unwrap().options.retries
-                    } else {
-                        exports_retries
-                    };
-                    let post_delay = if statecheck_query.is_some_and(|sq| sq.options.retries > 1) {
-                        statecheck_query.unwrap().options.retry_delay
-                    } else {
-                        exports_retry_delay
-                    };
+                    let post_retries = exports_retries;
+                    let post_delay = exports_retry_delay;
 
                     let (state, proxy) = runner.check_state_using_exports_proxy(
                         resource,
@@ -412,11 +434,9 @@ fn run_build(
             {
                 (iq.clone(), 1u32, 0u32)
             } else if let Some(cq) = resource_queries.get("command") {
-                (
-                    cq.rendered.clone(),
-                    cq.options.retries,
-                    cq.options.retry_delay,
-                )
+                let rendered =
+                    runner.render_query(&resource.name, "command", &cq.template, &full_context);
+                (rendered, cq.options.retries, cq.options.retry_delay)
             } else {
                 catch_error_and_exit(
                         "'sql' should be defined in the resource or the 'command' anchor needs to be supplied in the corresponding iql file for command type resources.",

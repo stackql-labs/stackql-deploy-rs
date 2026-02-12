@@ -4,6 +4,11 @@
 //!
 //! Handles loading, parsing, and rendering SQL query templates from .iql files.
 //! Matches the Python `lib/templating.py` implementation.
+//!
+//! Queries are loaded and parsed eagerly, but rendered lazily (JIT) when
+//! actually needed. This avoids errors from templates that reference variables
+//! not yet available in the context (e.g., delete queries referencing exports
+//! that haven't been computed yet during a build operation).
 
 use std::collections::HashMap;
 use std::fs;
@@ -17,11 +22,11 @@ use crate::core::config::prepare_query_context;
 use crate::resource::manifest::Resource;
 use crate::template::engine::TemplateEngine;
 
-/// Parsed query with its rendered form and options.
+/// Parsed query with its raw template and options.
+/// Rendering is deferred until the query is actually needed.
 #[derive(Debug, Clone)]
 pub struct ParsedQuery {
     pub template: String,
-    pub rendered: String,
     pub options: QueryOptions,
 }
 
@@ -122,7 +127,7 @@ fn load_sql_queries(
 /// becomes:
 ///   `{{ __inline_dict_0 | generate_patch_document }}`
 /// with `__inline_dict_0` set to the constructed JSON object in context.
-fn preprocess_inline_dicts(template: &str, context: &mut HashMap<String, String>) -> String {
+pub fn preprocess_inline_dicts(template: &str, context: &mut HashMap<String, String>) -> String {
     // Match {{ { ... } | filter_name }}
     // This regex captures the dict body and the filter expression
     let re = Regex::new(r"\{\{\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}\s*\|\s*(\w+)\s*\}\}").unwrap();
@@ -227,49 +232,53 @@ fn split_dict_entries(s: &str) -> Vec<String> {
     entries
 }
 
-/// Render query templates with the full context.
-/// Matches Python's `render_queries`.
-fn render_queries(
+/// Render a single query template with the given context.
+/// This is the JIT rendering function called when a query is actually needed.
+pub fn render_query(
     engine: &TemplateEngine,
     res_name: &str,
-    queries: &HashMap<String, String>,
+    anchor: &str,
+    template: &str,
     context: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    let mut rendered_queries = HashMap::new();
-
-    // Prepare context: re-serialize JSON values
+) -> String {
     let temp_context = prepare_query_context(context);
 
-    for (key, query) in queries {
-        debug!("[{}] [{}] query template:\n\n{}\n", res_name, key, query);
+    debug!(
+        "[{}] [{}] query template:\n\n{}\n",
+        res_name, anchor, template
+    );
 
-        // Pre-process inline dict expressions and render with filters
-        let mut ctx = temp_context.clone();
-        let processed_query = preprocess_inline_dicts(query, &mut ctx);
+    let mut ctx = temp_context;
+    let processed_query = preprocess_inline_dicts(template, &mut ctx);
 
-        let template_name = format!("{}__{}", res_name, key);
-        match engine.render_with_filters(&template_name, &processed_query, &ctx) {
-            Ok(rendered) => {
-                debug!("[{}] [{}] rendered query:\n\n{}\n", res_name, key, rendered);
-                rendered_queries.insert(key.clone(), rendered);
-            }
-            Err(e) => {
-                error!("Error rendering query for [{}] [{}]: {}", res_name, key, e);
-                process::exit(1);
-            }
+    let template_name = format!("{}__{}", res_name, anchor);
+    match engine.render_with_filters(&template_name, &processed_query, &ctx) {
+        Ok(rendered) => {
+            debug!(
+                "[{}] [{}] rendered query:\n\n{}\n",
+                res_name, anchor, rendered
+            );
+            rendered
+        }
+        Err(e) => {
+            error!(
+                "Error rendering query for [{}] [{}]: {}",
+                res_name, anchor, e
+            );
+            process::exit(1);
         }
     }
-
-    rendered_queries
 }
 
-/// Get queries for a resource: load from file, parse anchors, render with context.
+/// Get queries for a resource: load from file, parse anchors.
+/// Templates are NOT rendered here — rendering is deferred to when
+/// each query is actually needed (JIT rendering).
 /// Matches Python's `get_queries`.
 pub fn get_queries(
-    engine: &TemplateEngine,
+    _engine: &TemplateEngine,
     stack_dir: &str,
     resource: &Resource,
-    full_context: &HashMap<String, String>,
+    _full_context: &HashMap<String, String>,
 ) -> HashMap<String, ParsedQuery> {
     let mut result = HashMap::new();
 
@@ -287,7 +296,6 @@ pub fn get_queries(
     }
 
     let (query_templates, query_options) = load_sql_queries(&template_path);
-    let rendered_queries = render_queries(engine, &resource.name, &query_templates, full_context);
 
     for (anchor, template) in &query_templates {
         // Fix backward compatibility for preflight and postdeploy
@@ -298,13 +306,11 @@ pub fn get_queries(
         };
 
         let opts = query_options.get(anchor).cloned().unwrap_or_default();
-        let rendered = rendered_queries.get(anchor).cloned().unwrap_or_default();
 
         result.insert(
             normalized_anchor.clone(),
             ParsedQuery {
                 template: template.clone(),
-                rendered,
                 options: QueryOptions {
                     retries: *opts.get("retries").unwrap_or(&1),
                     retry_delay: *opts.get("retry_delay").unwrap_or(&0),
