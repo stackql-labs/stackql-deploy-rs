@@ -232,6 +232,15 @@ fn split_dict_entries(s: &str) -> Vec<String> {
     entries
 }
 
+/// Pre-process Jinja2-specific syntax into Tera-compatible equivalents.
+/// Currently handles:
+/// - `{{ uuid() }}` -> `{{ uuid }}` (Jinja2 function call to Tera variable)
+fn preprocess_jinja2_compat(template: &str) -> String {
+    // Convert {{ uuid() }} to {{ uuid }}
+    let re = Regex::new(r"\{\{\s*uuid\(\)\s*\}\}").unwrap();
+    re.replace_all(template, "{{ uuid }}").to_string()
+}
+
 /// Render a single query template with the given context.
 /// This is the JIT rendering function called when a query is actually needed.
 pub fn render_query(
@@ -249,7 +258,8 @@ pub fn render_query(
     );
 
     let mut ctx = temp_context;
-    let processed_query = preprocess_inline_dicts(template, &mut ctx);
+    let compat_query = preprocess_jinja2_compat(template);
+    let processed_query = preprocess_inline_dicts(&compat_query, &mut ctx);
 
     let template_name = format!("{}__{}", res_name, anchor);
     match engine.render_with_filters(&template_name, &processed_query, &ctx) {
@@ -343,7 +353,8 @@ pub fn render_inline_template(
     );
 
     let mut temp_context = prepare_query_context(full_context);
-    let processed = preprocess_inline_dicts(template_string, &mut temp_context);
+    let compat = preprocess_jinja2_compat(template_string);
+    let processed = preprocess_inline_dicts(&compat, &mut temp_context);
     let template_name = format!("{}__inline", resource_name);
 
     match engine.render_with_filters(&template_name, &processed, &temp_context) {
