@@ -11,6 +11,7 @@ use std::path::Path;
 use std::process;
 
 use log::{debug, error};
+use regex::Regex;
 
 use crate::core::config::prepare_query_context;
 use crate::resource::manifest::Resource;
@@ -110,6 +111,122 @@ fn load_sql_queries(
     (queries, options)
 }
 
+/// Pre-process Jinja2 inline dict expressions that Tera doesn't support.
+///
+/// Converts patterns like `{{ { "Key": var, ... } | filter }}` into
+/// Tera-compatible form by resolving the dict from context variables
+/// and injecting the result as a temporary context variable.
+///
+/// For example:
+///   `{{ { "Description": description, "Path": path } | generate_patch_document }}`
+/// becomes:
+///   `{{ __inline_dict_0 | generate_patch_document }}`
+/// with `__inline_dict_0` set to the constructed JSON object in context.
+fn preprocess_inline_dicts(template: &str, context: &mut HashMap<String, String>) -> String {
+    // Match {{ { ... } | filter_name }}
+    // This regex captures the dict body and the filter expression
+    let re = Regex::new(r"\{\{\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}\s*\|\s*(\w+)\s*\}\}").unwrap();
+
+    let mut result = template.to_string();
+    let mut counter = 0;
+
+    // We need to iterate carefully since we're modifying the string
+    loop {
+        let captures = re.captures(&result);
+        if captures.is_none() {
+            break;
+        }
+        let caps = captures.unwrap();
+        let full_match = caps.get(0).unwrap();
+        let dict_body = caps.get(1).unwrap().as_str().trim();
+        let filter_name = caps.get(2).unwrap().as_str();
+
+        // Parse the dict body: "Key": var, "Key2": var2
+        let mut obj = serde_json::Map::new();
+        for entry in split_dict_entries(dict_body) {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            if let Some((key_part, val_part)) = entry.split_once(':') {
+                let key = key_part
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
+                let var_name = val_part.trim();
+
+                // Look up the variable in context
+                let value = context.get(var_name).cloned().unwrap_or_default();
+
+                // Try to parse as JSON, otherwise use as string
+                let json_val = match serde_json::from_str::<serde_json::Value>(&value) {
+                    Ok(v) => v,
+                    Err(_) => serde_json::Value::String(value),
+                };
+                obj.insert(key, json_val);
+            }
+        }
+
+        let var_name = format!("__inline_dict_{}", counter);
+        let json_str = serde_json::to_string(&serde_json::Value::Object(obj)).unwrap_or_default();
+        context.insert(var_name.clone(), json_str);
+
+        let replacement = format!("{{{{ {} | {} }}}}", var_name, filter_name);
+        result = format!(
+            "{}{}{}",
+            &result[..full_match.start()],
+            replacement,
+            &result[full_match.end()..]
+        );
+        counter += 1;
+    }
+
+    result
+}
+
+/// Split dict entries by commas, but respect nested braces and quoted strings.
+fn split_dict_entries(s: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    let mut brace_depth = 0;
+    let mut in_quote = false;
+    let mut quote_char = ' ';
+
+    for ch in s.chars() {
+        match ch {
+            '"' | '\'' if !in_quote => {
+                in_quote = true;
+                quote_char = ch;
+                current.push(ch);
+            }
+            c if in_quote && c == quote_char => {
+                in_quote = false;
+                current.push(ch);
+            }
+            '{' if !in_quote => {
+                brace_depth += 1;
+                current.push(ch);
+            }
+            '}' if !in_quote => {
+                brace_depth -= 1;
+                current.push(ch);
+            }
+            ',' if !in_quote && brace_depth == 0 => {
+                entries.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+    if !current.trim().is_empty() {
+        entries.push(current.trim().to_string());
+    }
+    entries
+}
+
 /// Render query templates with the full context.
 /// Matches Python's `render_queries`.
 fn render_queries(
@@ -126,7 +243,12 @@ fn render_queries(
     for (key, query) in queries {
         debug!("[{}] [{}] query template:\n\n{}\n", res_name, key, query);
 
-        match engine.render(query, &temp_context) {
+        // Pre-process inline dict expressions and render with filters
+        let mut ctx = temp_context.clone();
+        let processed_query = preprocess_inline_dicts(query, &mut ctx);
+
+        let template_name = format!("{}__{}", res_name, key);
+        match engine.render_with_filters(&template_name, &processed_query, &ctx) {
             Ok(rendered) => {
                 debug!("[{}] [{}] rendered query:\n\n{}\n", res_name, key, rendered);
                 rendered_queries.insert(key.clone(), rendered);
@@ -214,9 +336,11 @@ pub fn render_inline_template(
         resource_name, template_string
     );
 
-    let temp_context = prepare_query_context(full_context);
+    let mut temp_context = prepare_query_context(full_context);
+    let processed = preprocess_inline_dicts(template_string, &mut temp_context);
+    let template_name = format!("{}__inline", resource_name);
 
-    match engine.render(template_string, &temp_context) {
+    match engine.render_with_filters(&template_name, &processed, &temp_context) {
         Ok(rendered) => {
             debug!(
                 "[{}] rendered inline template:\n\n{}\n",
