@@ -21,6 +21,7 @@ use crate::core::config::get_resource_type;
 use crate::core::utils::catch_error_and_exit;
 use crate::utils::connection::create_client;
 use crate::utils::display::{print_unicode_box, BorderColor};
+use crate::utils::server::check_and_start_server;
 
 /// Defines the `build` command for the CLI application.
 pub fn command() -> Command {
@@ -56,6 +57,7 @@ pub fn execute(matches: &ArgMatches) {
     let on_failure_val = matches.get_one::<FailureAction>("on-failure").unwrap();
     let output_file = matches.get_one::<String>("output-file");
 
+    check_and_start_server();
     let client = create_client();
     let mut runner = CommandRunner::new(
         client,
