@@ -1,3 +1,4 @@
+pub mod base;
 pub mod build;
 pub mod common_args;
 pub mod info;

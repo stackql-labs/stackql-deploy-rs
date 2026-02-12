@@ -5,20 +5,6 @@
 //! This module provides utility functions for rendering messages with various styles
 //! including Unicode-styled message boxes and color-coded output for errors, success messages, and informational messages.
 //! It leverages the `colored` crate for styling and `unicode_width` crate for handling Unicode text width.
-//!
-//! ## Features
-//! - Unicode-styled message boxes with proper alignment for emojis and wide characters.
-//! - Color-coded messages for errors, successes, and informational outputs.
-//!
-//! ## Example Usage
-//! ```rust
-//! use crate::utils::display::print_unicode_box;
-//!
-//! print_unicode_box("🚀 Initializing application...");
-//! print_error!("Failed to connect to the server.");
-//! print_success!("Operation completed successfully.");
-//! print_info!("Fetching data...");
-//! ```
 
 use log::debug;
 use unicode_width::UnicodeWidthStr;
@@ -26,10 +12,32 @@ use unicode_width::UnicodeWidthStr;
 use crate::commands::common_args::CommonCommandArgs;
 use clap::ArgMatches;
 
+/// Border color options for Unicode boxes, matching Python's BorderColor enum.
+#[derive(Debug, Clone, Copy)]
+pub enum BorderColor {
+    Yellow,
+    Blue,
+    Green,
+    Red,
+    Cyan,
+}
+
+impl BorderColor {
+    fn ansi_code(&self) -> &str {
+        match self {
+            BorderColor::Yellow => "\x1b[93m",
+            BorderColor::Blue => "\x1b[94m",
+            BorderColor::Green => "\x1b[92m",
+            BorderColor::Red => "\x1b[91m",
+            BorderColor::Cyan => "\x1b[96m",
+        }
+    }
+}
+
 /// Utility function to print a Unicode-styled message box
-/// that correctly handles the width of emojis and other wide characters
-pub fn print_unicode_box(message: &str) {
-    let border_color = "\x1b[93m"; // Yellow
+/// that correctly handles the width of emojis and other wide characters.
+pub fn print_unicode_box(message: &str, color: BorderColor) {
+    let border_color = color.ansi_code();
     let reset_color = "\x1b[0m";
     let lines: Vec<&str> = message.split('\n').collect();
 

@@ -59,6 +59,10 @@ pub struct Manifest {
     /// Resources in the stack
     #[serde(default)]
     pub resources: Vec<Resource>,
+
+    /// Stack-level exports (written to JSON output file)
+    #[serde(default)]
+    pub exports: Vec<String>,
 }
 
 /// Default version for manifest when not specified
@@ -95,13 +99,21 @@ pub struct Resource {
     #[serde(default)]
     pub file: Option<String>,
 
+    /// Inline SQL for query/command type resources
+    #[serde(default)]
+    pub sql: Option<String>,
+
+    /// Script command for script type resources
+    #[serde(default)]
+    pub run: Option<String>,
+
     /// Properties for the resource
     #[serde(default)]
     pub props: Vec<Property>,
 
-    /// Exports from the resource
+    /// Exports from the resource (can be strings or {key: value} maps)
     #[serde(default)]
-    pub exports: Vec<String>,
+    pub exports: Vec<serde_yaml::Value>,
 
     /// Protected exports
     #[serde(default)]
@@ -114,6 +126,14 @@ pub struct Resource {
     /// Condition for resource processing
     #[serde(default)]
     pub r#if: Option<String>,
+
+    /// Skip validation for this resource
+    #[serde(default)]
+    pub skip_validation: Option<bool>,
+
+    /// Auth configuration for the resource
+    #[serde(default)]
+    pub auth: Option<serde_yaml::Value>,
 }
 
 /// Default resource type value
@@ -192,31 +212,11 @@ impl Manifest {
                     return Err(ManifestError::MissingField("property.name".to_string()));
                 }
 
-                // Each property must have either a value or values
-                if prop.value.is_none() && prop.values.is_none() {
+                // Each property must have either a value, values, or merge
+                if prop.value.is_none() && prop.values.is_none() && prop.merge.is_none() {
                     return Err(ManifestError::MissingField(format!(
-                        "Property '{}' in resource '{}' has no value or values",
+                        "Property '{}' in resource '{}' has no value, values, or merge",
                         prop.name, resource.name
-                    )));
-                }
-            }
-
-            // Make sure exports are valid
-            for export in &resource.exports {
-                if export.is_empty() {
-                    return Err(ManifestError::InvalidField(format!(
-                        "Empty export in resource '{}'",
-                        resource.name
-                    )));
-                }
-            }
-
-            // Make sure protected exports are a subset of exports
-            for protected in &resource.protected {
-                if !resource.exports.contains(protected) {
-                    return Err(ManifestError::InvalidField(format!(
-                        "Protected export '{}' not found in exports for resource '{}'",
-                        protected, resource.name
                     )));
                 }
             }
