@@ -237,12 +237,26 @@ fn filter_generate_patch_document(
     value: &tera::Value,
     _args: &HashMap<String, tera::Value>,
 ) -> tera::Result<tera::Value> {
-    let obj = value
-        .as_object()
-        .ok_or_else(|| tera::Error::msg("generate_patch_document: expected an object"))?;
+    // Accept either a JSON object directly or a JSON string to parse
+    let obj = if let Some(o) = value.as_object() {
+        o.clone()
+    } else if let Some(s) = value.as_str() {
+        match serde_json::from_str::<JsonValue>(s) {
+            Ok(JsonValue::Object(o)) => o,
+            _ => {
+                return Err(tera::Error::msg(
+                    "generate_patch_document: expected a JSON object or JSON string",
+                ))
+            }
+        }
+    } else {
+        return Err(tera::Error::msg(
+            "generate_patch_document: expected an object or JSON string",
+        ));
+    };
 
     let mut patch_doc: Vec<JsonValue> = Vec::new();
-    for (key, val) in obj {
+    for (key, val) in &obj {
         let patch_value = if let Some(s) = val.as_str() {
             // Try to parse as JSON
             match serde_json::from_str::<JsonValue>(s) {
