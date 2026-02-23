@@ -13,8 +13,27 @@ The value for the property
 - name: public_address
   props:
   - name: address_name
-    value: "{{ stack_name }}-{{ stack_env }}-{{ region }}-ip-addr"  
+    value: "{{ stack_name }}-{{ stack_env }}-{{ region }}-ip-addr"
 ...
 ```
 
 </File>
+
+:::tip
+
+You can use the [`file()` directive](../../../file-directive) to include values from external JSON or YAML files. This is useful for modularizing large or reusable configuration blocks like IAM policy statements:
+
+```yaml
+- name: policies
+  value:
+    - PolicyDocument:
+        Statement:
+          - file(aws/iam/policies/ec2_permissions.json)
+          - file(aws/iam/policies/service_linked_role.json)
+        Version: '2012-10-17'
+      PolicyName: "{{ stack_name }}-{{ stack_env }}-policy"
+```
+
+File paths are resolved relative to the `resources/` directory. See the [`file()` directive documentation](../../../file-directive) for more details.
+
+:::
