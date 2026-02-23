@@ -77,15 +77,13 @@ impl TemplateEngine {
     }
 
     /// Renders a template string using a HashMap<String, String> context.
+    /// Dotted keys are converted to nested objects for Tera property access.
     pub fn render_template(
         &self,
         template: &str,
         context: &HashMap<String, String>,
     ) -> TemplateResult<String> {
-        let mut tera_context = TeraContext::new();
-        for (key, value) in context {
-            tera_context.insert(key, value);
-        }
+        let tera_context = build_tera_context(context);
         self.render_with_tera_context(template, &tera_context)
     }
 
@@ -113,6 +111,10 @@ impl TemplateEngine {
     /// Renders a template string with context and custom filters.
     /// This method creates a fresh Tera instance with the template registered,
     /// which allows custom filters to work.
+    ///
+    /// Dotted keys in `context` (e.g. `"resource.var"`) are automatically
+    /// converted to nested objects so that Tera's native property-access syntax
+    /// (`{{ resource.var }}`) works correctly.
     pub fn render_with_filters(
         &self,
         template_name: &str,
@@ -125,10 +127,7 @@ impl TemplateEngine {
         tera.add_raw_template(template_name, template)
             .map_err(|e| TemplateError::SyntaxError(full_error_chain(&e)))?;
 
-        let mut tera_context = TeraContext::new();
-        for (key, value) in context {
-            tera_context.insert(key, value);
-        }
+        let mut tera_context = build_tera_context(context);
 
         // Add uuid global function via context
         let uuid_val = uuid::Uuid::new_v4().to_string();
@@ -156,6 +155,44 @@ fn full_error_chain(err: &dyn StdError) -> String {
         current = cause.source();
     }
     parts.join(": ")
+}
+
+/// Build a Tera context from a flat `HashMap<String, String>`.
+///
+/// Keys that contain a `.` (e.g. `"resource_name.var"`) are grouped into
+/// nested objects so that Tera's property-access syntax works:
+///
+/// ```text
+/// context["my_vpc.vpc_id"] = "vpc-123"
+///   ↓
+/// Tera context: { my_vpc: { vpc_id: "vpc-123" }, ... }
+///   → {{ my_vpc.vpc_id }} renders as "vpc-123"
+/// ```
+///
+/// Non-dotted keys are inserted as top-level strings as before.
+fn build_tera_context(context: &HashMap<String, String>) -> TeraContext {
+    let mut tera_context = TeraContext::new();
+
+    // Collect dotted keys grouped by prefix
+    let mut nested: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+    for (key, value) in context {
+        if let Some((prefix, suffix)) = key.split_once('.') {
+            nested
+                .entry(prefix.to_string())
+                .or_default()
+                .insert(suffix.to_string(), value.clone());
+        } else {
+            tera_context.insert(key, value);
+        }
+    }
+
+    // Insert each prefix group as a nested object
+    for (prefix, map) in &nested {
+        tera_context.insert(prefix, map);
+    }
+
+    tera_context
 }
 
 /// Register all custom Jinja2 filters matching the Python implementation.
@@ -423,5 +460,54 @@ mod tests {
             }
             other => panic!("Expected VariableNotFound error, got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_dotted_key_renders_as_nested_property() {
+        let engine = TemplateEngine::new();
+        let mut context = HashMap::new();
+        context.insert("my_vpc.vpc_id".to_string(), "vpc-abc123".to_string());
+        // Also insert unscoped key (mirrors export_vars behaviour)
+        context.insert("vpc_id".to_string(), "vpc-abc123".to_string());
+
+        // Resource-scoped reference
+        let result = engine
+            .render_with_filters("t1", "{{ my_vpc.vpc_id }}", &context)
+            .unwrap();
+        assert_eq!(result, "vpc-abc123");
+
+        // Unscoped reference still works
+        let result2 = engine
+            .render_with_filters("t2", "{{ vpc_id }}", &context)
+            .unwrap();
+        assert_eq!(result2, "vpc-abc123");
+    }
+
+    #[test]
+    fn test_dotted_key_in_simple_render() {
+        let engine = TemplateEngine::new();
+        let mut context = HashMap::new();
+        context.insert(
+            "aws_cross_account_role.role_arn".to_string(),
+            "arn:aws:iam::123:role/test".to_string(),
+        );
+
+        let result = engine
+            .render("ARN: {{ aws_cross_account_role.role_arn }}", &context)
+            .unwrap();
+        assert_eq!(result, "ARN: arn:aws:iam::123:role/test");
+    }
+
+    #[test]
+    fn test_multiple_dotted_keys_same_prefix() {
+        let engine = TemplateEngine::new();
+        let mut context = HashMap::new();
+        context.insert("res.a".to_string(), "val_a".to_string());
+        context.insert("res.b".to_string(), "val_b".to_string());
+
+        let result = engine
+            .render_with_filters("t", "{{ res.a }}-{{ res.b }}", &context)
+            .unwrap();
+        assert_eq!(result, "val_a-val_b");
     }
 }

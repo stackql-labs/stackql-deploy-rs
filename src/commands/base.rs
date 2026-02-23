@@ -23,6 +23,7 @@ use crate::core::utils::{
     pull_providers, run_ext_script, run_stackql_command, run_stackql_query, show_query,
 };
 use crate::resource::manifest::{Manifest, Resource};
+use crate::resource::validation::validate_manifest;
 use crate::template::engine::TemplateEngine;
 // display imports available for future use
 
@@ -55,6 +56,18 @@ impl CommandRunner {
 
         // Load manifest
         let manifest = Manifest::load_from_dir_or_exit(stack_dir);
+
+        // Validate manifest rules
+        if let Err(errors) = validate_manifest(&manifest) {
+            for err in &errors {
+                error!("{}", err);
+            }
+            catch_error_and_exit(&format!(
+                "Manifest validation failed with {} error(s)",
+                errors.len()
+            ));
+        }
+
         let stack_name = manifest.name.clone();
 
         // Render globals

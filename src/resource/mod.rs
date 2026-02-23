@@ -12,6 +12,7 @@
 pub mod manifest;
 // pub mod operations;
 // pub mod queries;
+pub mod validation;
 
 // /// Creates a combined error type for resource operations.
 // #[derive(thiserror::Error, Debug)]

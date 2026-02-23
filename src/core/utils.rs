@@ -458,21 +458,55 @@ fn is_version_higher(installed: &str, requested: &str) -> bool {
 }
 
 /// Update global context with exported values.
-/// Matches Python's `export_vars`.
+///
+/// Each exported variable is stored twice:
+///   1. **Unscoped** (`key`) – can be referenced as `{{ key }}` by subsequent
+///      resources but may be overridden if a later resource exports the same name.
+///   2. **Resource-scoped** (`resource_name.key`) – immutable once set; provides
+///      an unambiguous reference (e.g. `{{ aws_cross_account_role.role_name }}`).
+///
+/// Tera templates use `.` in variable names without issue, so both forms are
+/// usable in `{{ }}` expressions.
 pub fn export_vars(
     global_context: &mut HashMap<String, String>,
-    _resource_name: &str,
+    resource_name: &str,
     export_data: &HashMap<String, String>,
     protected_exports: &[String],
 ) {
     for (key, value) in export_data {
-        if protected_exports.contains(key) {
-            let mask = "*".repeat(value.len());
-            info!("set protected variable [{}] to [{}] in exports", key, mask);
+        let is_protected = protected_exports.contains(key);
+        let display_value = if is_protected {
+            "*".repeat(value.len())
+        } else {
+            value.clone()
+        };
+
+        // 1. Unscoped name (can be overridden by later resources)
+        if is_protected {
+            info!(
+                "set protected variable [{}] to [{}] in exports",
+                key, display_value
+            );
         } else {
             info!("set [{}] to [{}] in exports", key, value);
         }
         global_context.insert(key.clone(), value.clone());
+
+        // 2. Resource-scoped name (immutable – never overwritten)
+        let scoped_key = format!("{}.{}", resource_name, key);
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            global_context.entry(scoped_key.clone())
+        {
+            if is_protected {
+                info!(
+                    "set protected variable [{}] to [{}] in exports",
+                    scoped_key, display_value
+                );
+            } else {
+                info!("set [{}] to [{}] in exports", scoped_key, value);
+            }
+            entry.insert(value.clone());
+        }
     }
 }
 
