@@ -37,9 +37,14 @@ const sidebars = {
     },
     {
       type: 'doc',
-      id: 'manifest-file', 
+      id: 'manifest-file',
       label: 'stackql_manifest.yml',
-    },    
+    },
+    {
+      type: 'doc',
+      id: 'file-directive',
+      label: 'file() Directive',
+    },
     {
       type: 'doc',
       id: 'resource-query-files',

@@ -239,7 +239,10 @@ fn resolve_file_directives(value: &mut serde_yaml::Value, base_dir: &Path) -> Ma
 fn load_file_contents(file_path: &str, base_dir: &Path) -> ManifestResult<serde_yaml::Value> {
     let full_path = base_dir.join(file_path);
 
-    debug!("Resolving file() directive: {} -> {:?}", file_path, full_path);
+    debug!(
+        "Resolving file() directive: {} -> {:?}",
+        file_path, full_path
+    );
 
     let content = fs::read_to_string(&full_path).map_err(|e| {
         ManifestError::FileIncludeError(format!(
@@ -248,20 +251,16 @@ fn load_file_contents(file_path: &str, base_dir: &Path) -> ManifestResult<serde_
         ))
     })?;
 
-    let ext = full_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     let mut parsed: serde_yaml::Value = match ext {
         "json" => {
-            let json_val: serde_json::Value =
-                serde_json::from_str(&content).map_err(|e| {
-                    ManifestError::FileIncludeError(format!(
-                        "failed to parse JSON file '{}': {}",
-                        file_path, e
-                    ))
-                })?;
+            let json_val: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+                ManifestError::FileIncludeError(format!(
+                    "failed to parse JSON file '{}': {}",
+                    file_path, e
+                ))
+            })?;
             // Convert JSON -> YAML value
             serde_yaml::to_value(&json_val).map_err(|e| {
                 ManifestError::FileIncludeError(format!(
@@ -469,8 +468,14 @@ mod tests {
 
     #[test]
     fn test_parse_file_directive() {
-        assert_eq!(parse_file_directive("file(foo/bar.json)"), Some("foo/bar.json"));
-        assert_eq!(parse_file_directive("  file( foo/bar.json )  "), Some("foo/bar.json"));
+        assert_eq!(
+            parse_file_directive("file(foo/bar.json)"),
+            Some("foo/bar.json")
+        );
+        assert_eq!(
+            parse_file_directive("  file( foo/bar.json )  "),
+            Some("foo/bar.json")
+        );
         assert_eq!(parse_file_directive("file()"), None);
         assert_eq!(parse_file_directive("not a directive"), None);
         assert_eq!(parse_file_directive("file("), None);
@@ -564,11 +569,7 @@ mod tests {
     fn test_resolve_file_directive_nested_in_mapping() {
         let dir = setup_test_dir();
         let resources_dir = dir.path().join("resources");
-        fs::write(
-            resources_dir.join("stmts.json"),
-            r#"[{"Effect": "Allow"}]"#,
-        )
-        .unwrap();
+        fs::write(resources_dir.join("stmts.json"), r#"[{"Effect": "Allow"}]"#).unwrap();
 
         let mut map = serde_yaml::Mapping::new();
         map.insert(
@@ -628,7 +629,10 @@ mod tests {
         let mut value = serde_yaml::Value::String("just a normal string".to_string());
         resolve_file_directives(&mut value, &resources_dir).unwrap();
 
-        assert_eq!(value, serde_yaml::Value::String("just a normal string".into()));
+        assert_eq!(
+            value,
+            serde_yaml::Value::String("just a normal string".into())
+        );
     }
 
     #[test]
@@ -679,7 +683,11 @@ resources:
 
         let manifest = Manifest::load_from_stack_dir(dir.path()).unwrap();
         let resource = manifest.find_resource("test_resource").unwrap();
-        let policies_prop = resource.props.iter().find(|p| p.name == "policies").unwrap();
+        let policies_prop = resource
+            .props
+            .iter()
+            .find(|p| p.name == "policies")
+            .unwrap();
         let value = policies_prop.value.as_ref().unwrap();
 
         // The value should be a sequence with one policy
