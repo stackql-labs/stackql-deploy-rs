@@ -2,61 +2,43 @@
 
 //! # Manifest Validation Module
 //!
-//! Contains validation rules applied to a [`Manifest`] before any command
-//! (`build`, `plan`, `teardown`, `test`) is executed.
-//!
-//! Each rule is a standalone function that returns either `Ok(())` or a list of
-//! [`ValidationError`] values describing what failed.  New rules should be added
-//! as additional functions and wired into [`validate_manifest`].
-//!
-//! ## Current rules
-//!
-//! | Rule ID                   | Description                                     |
-//! |---------------------------|-------------------------------------------------|
-//! | `unique-resource-names`   | Every resource name in the stack must be unique |
+//! Validates a parsed manifest against a set of rules before any command
+//! (build, test, teardown) proceeds.  Each rule is a standalone function
+//! that returns a list of validation errors.  New rules can be added by
+//! implementing a function with the signature
+//! `fn(manifest: &Manifest) -> Vec<ValidationError>` and appending it to
+//! the `RULES` array in [`validate_manifest`].
 
-use std::collections::HashSet;
-use std::fmt;
+use std::collections::HashMap;
 
 use crate::resource::manifest::Manifest;
 
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
-
-/// A single manifest validation failure.
-#[derive(Debug, Clone)]
+/// A single validation error with a rule name and human-readable message.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ValidationError {
-    /// Short, machine-readable identifier for the rule that was violated.
-    pub rule: &'static str,
-
-    /// Human-readable explanation of what failed.
-    pub detail: String,
+    /// Machine-readable rule identifier (e.g. `"unique_resource_names"`).
+    pub rule: String,
+    /// Human-readable description of the violation.
+    pub message: String,
 }
 
-impl fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.rule, self.detail)
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.rule, self.message)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
-
-/// Run all manifest validation rules against `manifest`.
+/// Validate a manifest against all registered rules.
 ///
-/// All rules are evaluated (fail-all, not fail-fast) so that callers receive a
-/// complete picture of every problem at once.
-///
-/// Returns `Ok(())` when the manifest passes every rule, or
-/// `Err(Vec<ValidationError>)` containing one entry per failing check.
+/// Returns `Ok(())` when the manifest is valid, or `Err(Vec<ValidationError>)`
+/// containing every violation found (rules are not short-circuited).
 pub fn validate_manifest(manifest: &Manifest) -> Result<(), Vec<ValidationError>> {
-    let mut errors: Vec<ValidationError> = Vec::new();
+    // Register rules here.  Each entry is a function that accepts a &Manifest
+    // and returns a Vec<ValidationError>.  Adding a new rule is as simple as
+    // appending another entry to this list.
+    let rules: Vec<fn(&Manifest) -> Vec<ValidationError>> = vec![rule_unique_resource_names];
 
-    collect(&mut errors, validate_unique_resource_names(manifest));
-    // Wire in additional rules here as the list grows:
-    // collect(&mut errors, validate_some_other_rule(manifest));
+    let errors: Vec<ValidationError> = rules.iter().flat_map(|rule| rule(manifest)).collect();
 
     if errors.is_empty() {
         Ok(())
@@ -65,199 +47,226 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<(), Vec<ValidationError>
     }
 }
 
-/// Append errors from a rule result into the accumulator.
-fn collect(acc: &mut Vec<ValidationError>, result: Result<(), Vec<ValidationError>>) {
-    if let Err(mut errs) = result {
-        acc.append(&mut errs);
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Rule: unique-resource-names
+// Rules
 // ---------------------------------------------------------------------------
 
-/// Validates that every resource `name` in the stack is unique.
+/// Resource names within a manifest must be unique.
 ///
-/// Resource names must be unique because:
-///
-/// * Resources are processed in declaration order — a duplicate name leads to
-///   ambiguous processing behaviour.
-/// * Resource-scoped export keys (`{resource_name}.{export}`) are immutable
-///   once written.  A second resource with the same name would attempt to write
-///   the same scoped keys, making them permanently incorrect.
-///
-/// **Rule ID**: `unique-resource-names`
-fn validate_unique_resource_names(manifest: &Manifest) -> Result<(), Vec<ValidationError>> {
-    let mut seen: HashSet<&str> = HashSet::new();
-    let mut errors: Vec<ValidationError> = Vec::new();
+/// Because resource-scoped exports use the resource name as a namespace
+/// (e.g. `{{ my_resource.var }}`), duplicate names would create ambiguous
+/// references and silently overwrite immutable scoped exports.
+fn rule_unique_resource_names(manifest: &Manifest) -> Vec<ValidationError> {
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    let mut errors = Vec::new();
 
-    for resource in &manifest.resources {
-        if !seen.insert(resource.name.as_str()) {
+    for (idx, resource) in manifest.resources.iter().enumerate() {
+        if let Some(&first_idx) = seen.get(resource.name.as_str()) {
             errors.push(ValidationError {
-                rule: "unique-resource-names",
-                detail: format!(
-                    "resource name '{}' appears more than once in stack '{}'; \
-                     every resource name must be unique within a stack",
-                    resource.name, manifest.name,
+                rule: "unique_resource_names".to_string(),
+                message: format!(
+                    "Duplicate resource name '{}' at index {} (first seen at index {})",
+                    resource.name, idx, first_idx
                 ),
             });
+        } else {
+            seen.insert(&resource.name, idx);
         }
     }
 
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
+    errors
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resource::manifest::{Manifest, Resource};
+    use std::fs;
 
-    // -----------------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------------
-
-    /// Parse a manifest from an inline YAML string.
-    ///
-    /// Panics with a clear message if the YAML is malformed, so test failures
-    /// are easy to diagnose.
-    fn parse(yaml: &str) -> Manifest {
-        serde_yaml::from_str(yaml).unwrap_or_else(|e| {
-            panic!("test manifest YAML is invalid: {}\n\nYAML:\n{}", e, yaml)
-        })
+    /// Helper to build a minimal valid manifest with the given resource names.
+    fn manifest_with_resources(names: &[&str]) -> Manifest {
+        Manifest {
+            version: 1,
+            name: "test-stack".to_string(),
+            description: String::new(),
+            providers: vec!["aws".to_string()],
+            globals: vec![],
+            resources: names
+                .iter()
+                .map(|n| Resource {
+                    name: n.to_string(),
+                    r#type: "resource".to_string(),
+                    file: None,
+                    sql: None,
+                    run: None,
+                    props: vec![],
+                    exports: vec![],
+                    protected: vec![],
+                    description: String::new(),
+                    r#if: None,
+                    skip_validation: None,
+                    auth: None,
+                })
+                .collect(),
+            exports: vec![],
+        }
     }
 
-    // -----------------------------------------------------------------------
-    // Rule: unique-resource-names — positive (valid) fixture
-    // -----------------------------------------------------------------------
-
-    /// Manifest where every resource name is distinct. Should pass.
-    const VALID_UNIQUE_NAMES: &str = r#"
-version: 1
-name: test-stack
-providers:
-  - aws
-resources:
-  - name: vpc
-    props:
-      - name: vpc_name
-        value: my-vpc
-  - name: subnet
-    props:
-      - name: subnet_name
-        value: my-subnet
-  - name: role
-    props:
-      - name: role_name
-        value: my-role
-"#;
+    // --------------------------------------------------
+    // rule_unique_resource_names
+    // --------------------------------------------------
 
     #[test]
     fn test_unique_resource_names_valid() {
-        let manifest = parse(VALID_UNIQUE_NAMES);
+        let manifest = manifest_with_resources(&["vpc", "subnet", "security_group"]);
+        let result = validate_manifest(&manifest);
+        assert!(result.is_ok(), "Expected valid manifest, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_unique_resource_names_empty_resources() {
+        let manifest = manifest_with_resources(&[]);
         let result = validate_manifest(&manifest);
         assert!(
             result.is_ok(),
-            "A manifest with distinct resource names should pass validation, got: {:?}",
-            result,
+            "Empty resources list should be valid, got: {:?}",
+            result
         );
     }
 
-    // -----------------------------------------------------------------------
-    // Rule: unique-resource-names — negative (invalid) fixture
-    // -----------------------------------------------------------------------
-
-    /// Manifest where `vpc` appears twice. Should fail with exactly one error.
-    const INVALID_DUPLICATE_NAMES: &str = r#"
-version: 1
-name: test-stack
-providers:
-  - aws
-resources:
-  - name: vpc
-    props:
-      - name: vpc_name
-        value: my-vpc
-  - name: role
-    props:
-      - name: role_name
-        value: my-role
-  - name: vpc
-    props:
-      - name: vpc_name
-        value: another-vpc
-"#;
+    #[test]
+    fn test_unique_resource_names_single_resource() {
+        let manifest = manifest_with_resources(&["only_one"]);
+        let result = validate_manifest(&manifest);
+        assert!(result.is_ok());
+    }
 
     #[test]
-    fn test_unique_resource_names_duplicate_fails() {
-        let manifest = parse(INVALID_DUPLICATE_NAMES);
+    fn test_unique_resource_names_duplicate() {
+        let manifest = manifest_with_resources(&["vpc", "subnet", "vpc"]);
         let result = validate_manifest(&manifest);
-
-        assert!(
-            result.is_err(),
-            "A manifest with duplicate resource names must fail validation",
-        );
+        assert!(result.is_err(), "Expected duplicate to be detected");
 
         let errors = result.unwrap_err();
-        assert_eq!(
-            errors.len(),
-            1,
-            "Expected exactly one validation error for one duplicate, got: {:?}",
-            errors,
-        );
-        assert_eq!(
-            errors[0].rule, "unique-resource-names",
-            "Error must reference the correct rule ID",
-        );
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].rule, "unique_resource_names");
         assert!(
-            errors[0].detail.contains("vpc"),
-            "Error detail must mention the duplicate resource name 'vpc', got: {}",
-            errors[0].detail,
+            errors[0].message.contains("vpc"),
+            "Error should mention the duplicate name, got: {}",
+            errors[0].message
         );
     }
 
     #[test]
     fn test_unique_resource_names_multiple_duplicates() {
-        // Two independent duplicate pairs: 'vpc' and 'role' each appear twice.
-        let yaml = r#"
+        let manifest = manifest_with_resources(&["a", "b", "a", "c", "b", "a"]);
+        let result = validate_manifest(&manifest);
+        assert!(result.is_err());
+
+        let errors = result.unwrap_err();
+        // "a" appears at indices 0, 2, 5 → 2 errors
+        // "b" appears at indices 1, 4 → 1 error
+        assert_eq!(
+            errors.len(),
+            3,
+            "Expected 3 duplicate errors, got: {:?}",
+            errors
+        );
+    }
+
+    // --------------------------------------------------
+    // validate_manifest integration
+    // --------------------------------------------------
+
+    #[test]
+    fn test_validate_manifest_reports_all_rule_violations() {
+        // Currently only one rule, but this test verifies the aggregation logic
+        let manifest = manifest_with_resources(&["dup", "dup"]);
+        let errors = validate_manifest(&manifest).unwrap_err();
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0].rule, "unique_resource_names");
+    }
+
+    // --------------------------------------------------
+    // YAML file-based tests (positive & negative)
+    // --------------------------------------------------
+
+    /// Helper: create a temp stack directory with a manifest and empty resources/.
+    fn write_manifest_file(content: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("resources")).unwrap();
+        fs::write(dir.path().join("stackql_manifest.yml"), content).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_valid_manifest_file_passes_validation() {
+        let dir = write_manifest_file(
+            r#"
 version: 1
-name: test-stack
+name: valid-stack
+description: a valid manifest
 providers:
   - aws
 resources:
   - name: vpc
     props:
-      - name: vpc_name
-        value: my-vpc
-  - name: vpc
+      - name: cidr
+        value: "10.0.0.0/16"
+  - name: subnet
     props:
-      - name: vpc_name
-        value: another-vpc
-  - name: role
+      - name: cidr
+        value: "10.0.1.0/24"
+  - name: security_group
     props:
-      - name: role_name
-        value: my-role
-  - name: role
-    props:
-      - name: role_name
-        value: another-role
-"#;
-        let manifest = parse(yaml);
-        let result = validate_manifest(&manifest);
+      - name: description
+        value: "web traffic"
+"#,
+        );
 
-        assert!(result.is_err());
-        let errors = result.unwrap_err();
-        assert_eq!(
-            errors.len(),
-            2,
-            "Expected two errors (one per duplicate pair), got: {:?}",
-            errors,
+        let manifest = Manifest::load_from_stack_dir(dir.path()).unwrap();
+        let result = validate_manifest(&manifest);
+        assert!(
+            result.is_ok(),
+            "Valid manifest should pass, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_duplicate_names_manifest_file_fails_validation() {
+        let dir = write_manifest_file(
+            r#"
+version: 1
+name: bad-stack
+description: manifest with duplicate resource names
+providers:
+  - aws
+resources:
+  - name: my_bucket
+    props:
+      - name: bucket_name
+        value: "bucket-one"
+  - name: my_role
+    props:
+      - name: role_name
+        value: "role-one"
+  - name: my_bucket
+    props:
+      - name: bucket_name
+        value: "bucket-two"
+"#,
+        );
+
+        // load_from_stack_dir already runs validate_manifest internally,
+        // so a manifest with duplicate names should fail to load.
+        let result = Manifest::load_from_stack_dir(dir.path());
+        assert!(result.is_err(), "Duplicate names should fail to load");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("my_bucket"),
+            "Error should mention the duplicate name, got: {}",
+            err_msg
         );
     }
 }

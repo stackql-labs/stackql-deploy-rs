@@ -13,9 +13,7 @@ use std::process;
 use log::{debug, error, info};
 use pgwire_lite::PgwireLite;
 
-use crate::core::config::{
-    get_full_context, render_globals, render_string_value,
-};
+use crate::core::config::{get_full_context, render_globals, render_string_value};
 use crate::core::env::load_env_vars;
 use crate::core::templating::{self, ParsedQuery};
 use crate::core::utils::{
@@ -23,6 +21,7 @@ use crate::core::utils::{
     pull_providers, run_ext_script, run_stackql_command, run_stackql_query, show_query,
 };
 use crate::resource::manifest::{Manifest, Resource};
+use crate::resource::validation::validate_manifest;
 use crate::template::engine::TemplateEngine;
 
 /// Core state for all command operations, equivalent to Python's StackQLBase.
@@ -54,6 +53,18 @@ impl CommandRunner {
 
         // Load manifest
         let manifest = Manifest::load_from_dir_or_exit(stack_dir);
+
+        // Validate manifest rules
+        if let Err(errors) = validate_manifest(&manifest) {
+            for err in &errors {
+                error!("{}", err);
+            }
+            catch_error_and_exit(&format!(
+                "Manifest validation failed with {} error(s)",
+                errors.len()
+            ));
+        }
+
         let stack_name = manifest.name.clone();
 
         // Render globals
@@ -804,4 +815,3 @@ fn evaluate_simple_condition(condition: &str) -> Option<bool> {
 
     None
 }
-
