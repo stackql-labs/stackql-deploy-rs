@@ -37,34 +37,52 @@ pub struct QueryOptions {
     pub retry_delay: u32,
     pub postdelete_retries: u32,
     pub postdelete_retry_delay: u32,
+    /// Dot-path into the RETURNING * result to check before polling
+    /// (e.g. `"ProgressEvent.OperationStatus"`).  Only used on `callback`
+    /// anchors.
+    pub short_circuit_field: Option<String>,
+    /// Value of `short_circuit_field` that means polling can be skipped.
+    /// Only used on `callback` anchors.
+    pub short_circuit_value: Option<String>,
 }
 
-/// Parse an anchor line to extract key and options.
-/// Matches Python's `parse_anchor`.
-fn parse_anchor(anchor: &str) -> (String, HashMap<String, u32>) {
+/// Parse an anchor line to extract key, numeric options, and string options.
+/// Matches Python's `parse_anchor`, extended for callback string params.
+///
+/// Returns `(key, uint_options, str_options)`.  Numeric-valued params go into
+/// `uint_options`; all other params (e.g. `short_circuit_field`,
+/// `short_circuit_value`) go into `str_options`.
+fn parse_anchor(anchor: &str) -> (String, HashMap<String, u32>, HashMap<String, String>) {
     let parts: Vec<&str> = anchor.split(',').collect();
     let key = parts[0].trim().to_lowercase();
-    let mut options = HashMap::new();
+    let mut uint_options: HashMap<String, u32> = HashMap::new();
+    let mut str_options: HashMap<String, String> = HashMap::new();
 
     for part in &parts[1..] {
         if let Some((option_key, option_value)) = part.split_once('=') {
-            if let Ok(value) = option_value.trim().parse::<u32>() {
-                options.insert(option_key.trim().to_string(), value);
+            let k = option_key.trim().to_string();
+            let v = option_value.trim().to_string();
+            if let Ok(uint_val) = v.parse::<u32>() {
+                uint_options.insert(k, uint_val);
+            } else {
+                str_options.insert(k, v);
             }
         }
     }
 
-    (key, options)
+    (key, uint_options, str_options)
 }
+
+/// Return type of `load_sql_queries`: (templates, uint_options, str_options).
+type SqlQueriesResult = (
+    HashMap<String, String>,
+    HashMap<String, HashMap<String, u32>>,
+    HashMap<String, HashMap<String, String>>,
+);
 
 /// Load SQL queries from a .iql file, split by anchors.
 /// Matches Python's `load_sql_queries`.
-fn load_sql_queries(
-    file_path: &Path,
-) -> (
-    HashMap<String, String>,
-    HashMap<String, HashMap<String, u32>>,
-) {
+fn load_sql_queries(file_path: &Path) -> SqlQueriesResult {
     let content = match fs::read_to_string(file_path) {
         Ok(c) => c,
         Err(e) => {
@@ -74,7 +92,8 @@ fn load_sql_queries(
     };
 
     let mut queries: HashMap<String, String> = HashMap::new();
-    let mut options: HashMap<String, HashMap<String, u32>> = HashMap::new();
+    let mut uint_options: HashMap<String, HashMap<String, u32>> = HashMap::new();
+    let mut str_options: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut current_anchor: Option<String> = None;
     let mut query_buffer: Vec<String> = Vec::new();
 
@@ -83,12 +102,13 @@ fn load_sql_queries(
             // Store the current query under the last anchor
             if let Some(ref anchor) = current_anchor {
                 if !query_buffer.is_empty() {
-                    let (anchor_key, anchor_options) = parse_anchor(anchor);
+                    let (anchor_key, anchor_uint_opts, anchor_str_opts) = parse_anchor(anchor);
                     queries.insert(
                         anchor_key.clone(),
                         query_buffer.join("\n").trim().to_string(),
                     );
-                    options.insert(anchor_key, anchor_options);
+                    uint_options.insert(anchor_key.clone(), anchor_uint_opts);
+                    str_options.insert(anchor_key, anchor_str_opts);
                     query_buffer.clear();
                 }
             }
@@ -104,16 +124,17 @@ fn load_sql_queries(
     // Store the last query
     if let Some(ref anchor) = current_anchor {
         if !query_buffer.is_empty() {
-            let (anchor_key, anchor_options) = parse_anchor(anchor);
+            let (anchor_key, anchor_uint_opts, anchor_str_opts) = parse_anchor(anchor);
             queries.insert(
                 anchor_key.clone(),
                 query_buffer.join("\n").trim().to_string(),
             );
-            options.insert(anchor_key, anchor_options);
+            uint_options.insert(anchor_key.clone(), anchor_uint_opts);
+            str_options.insert(anchor_key, anchor_str_opts);
         }
     }
 
-    (queries, options)
+    (queries, uint_options, str_options)
 }
 
 /// Pre-process Jinja2 inline dict expressions that Tera doesn't support.
@@ -270,8 +291,16 @@ pub fn render_query(
         res_name, anchor, template
     );
 
+    let expanded = match preprocess_this_prefix(template, res_name) {
+        Ok(t) => t,
+        Err(e) => {
+            error!("[{}] [{}] {}", res_name, anchor, e);
+            process::exit(1);
+        }
+    };
+
     let mut ctx = temp_context;
-    let compat_query = preprocess_jinja2_compat(template);
+    let compat_query = preprocess_jinja2_compat(&expanded);
     let processed_query = preprocess_inline_dicts(&compat_query, &mut ctx);
 
     let template_name = format!("{}__{}", res_name, anchor);
@@ -328,6 +357,10 @@ pub fn render_query(
 /// Templates are NOT rendered here — rendering is deferred to when
 /// each query is actually needed (JIT rendering).
 /// Matches Python's `get_queries`.
+///
+/// Callback anchors (e.g. `callback:create`, `callback:delete`) are stored
+/// under the key `"callback:create"`, `"callback:delete"`, etc.  A bare
+/// `callback` anchor (no operation qualifier) is stored under `"callback"`.
 pub fn get_queries(
     _engine: &TemplateEngine,
     stack_dir: &str,
@@ -349,27 +382,32 @@ pub fn get_queries(
         process::exit(1);
     }
 
-    let (query_templates, query_options) = load_sql_queries(&template_path);
+    let (query_templates, query_uint_options, query_str_options) = load_sql_queries(&template_path);
 
     for (anchor, template) in &query_templates {
-        // Fix backward compatibility for preflight and postdeploy
+        // Fix backward compatibility for preflight and postdeploy.
+        // Callback anchors (callback:create, callback:delete, callback:update,
+        // callback) are passed through unchanged.
         let normalized_anchor = match anchor.as_str() {
             "preflight" => "exists".to_string(),
             "postdeploy" => "statecheck".to_string(),
             other => other.to_string(),
         };
 
-        let opts = query_options.get(anchor).cloned().unwrap_or_default();
+        let uint_opts = query_uint_options.get(anchor).cloned().unwrap_or_default();
+        let str_opts = query_str_options.get(anchor).cloned().unwrap_or_default();
 
         result.insert(
             normalized_anchor.clone(),
             ParsedQuery {
                 template: template.clone(),
                 options: QueryOptions {
-                    retries: *opts.get("retries").unwrap_or(&1),
-                    retry_delay: *opts.get("retry_delay").unwrap_or(&0),
-                    postdelete_retries: *opts.get("postdelete_retries").unwrap_or(&10),
-                    postdelete_retry_delay: *opts.get("postdelete_retry_delay").unwrap_or(&5),
+                    retries: *uint_opts.get("retries").unwrap_or(&1),
+                    retry_delay: *uint_opts.get("retry_delay").unwrap_or(&0),
+                    postdelete_retries: *uint_opts.get("postdelete_retries").unwrap_or(&10),
+                    postdelete_retry_delay: *uint_opts.get("postdelete_retry_delay").unwrap_or(&5),
+                    short_circuit_field: str_opts.get("short_circuit_field").cloned(),
+                    short_circuit_value: str_opts.get("short_circuit_value").cloned(),
                 },
             },
         );
@@ -381,6 +419,46 @@ pub fn get_queries(
         result.keys().collect::<Vec<_>>()
     );
     result
+}
+
+/// Pre-process `this.` prefix inside Tera template blocks.
+///
+/// Within every `{{ ... }}` and `{% ... %}` block, replaces `this.` with
+/// `{resource_name}.`, allowing resource-scoped variables to be referenced
+/// unambiguously inside a resource's own `.iql` file.
+///
+/// Returns `Err` with a diagnostic if `this.` appears but `resource_name`
+/// is empty (i.e. no active resource context, such as a global template).
+pub fn preprocess_this_prefix(template: &str, resource_name: &str) -> Result<String, String> {
+    if !template.contains("this.") {
+        return Ok(template.to_string());
+    }
+
+    if resource_name.is_empty() {
+        return Err(
+            "Template uses 'this.' prefix but no resource context is active; \
+             'this.' is only valid inside a resource's .iql file."
+                .to_string(),
+        );
+    }
+
+    let replacement = format!("{}.", resource_name);
+
+    // Replace 'this.' with '{resource_name}.' inside {{ ... }} blocks.
+    let var_re = Regex::new(r"(?s)\{\{(.*?)\}\}").unwrap();
+    let with_vars = var_re.replace_all(template, |caps: &regex::Captures| {
+        let inner = caps[1].replace("this.", &replacement);
+        format!("{{{{{}}}}}", inner)
+    });
+
+    // Also handle {% ... %} tag blocks (conditionals, loops).
+    let tag_re = Regex::new(r"(?s)\{%(.*?)%\}").unwrap();
+    let with_tags = tag_re.replace_all(&with_vars, |caps: &regex::Captures| {
+        let inner = caps[1].replace("this.", &replacement);
+        format!("{{%{}%}}", inner)
+    });
+
+    Ok(with_tags.to_string())
 }
 
 /// Render an inline SQL template string.
@@ -397,7 +475,16 @@ pub fn render_inline_template(
     );
 
     let mut temp_context = prepare_query_context(full_context);
-    let compat = preprocess_jinja2_compat(template_string);
+
+    let expanded = match preprocess_this_prefix(template_string, resource_name) {
+        Ok(t) => t,
+        Err(e) => {
+            error!("[{}] inline template: {}", resource_name, e);
+            process::exit(1);
+        }
+    };
+
+    let compat = preprocess_jinja2_compat(&expanded);
     let processed = preprocess_inline_dicts(&compat, &mut temp_context);
     let template_name = format!("{}__inline", resource_name);
 
@@ -445,5 +532,178 @@ pub fn render_inline_template(
 
             process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::template::engine::TemplateEngine;
+
+    // ── preprocess_this_prefix unit tests ─────────────────────────────────
+
+    #[test]
+    fn test_preprocess_this_prefix_basic_rewrite() {
+        let result = preprocess_this_prefix("{{ this.fred }}", "resource_name_x").unwrap();
+        assert_eq!(result, "{{ resource_name_x.fred }}");
+    }
+
+    #[test]
+    fn test_preprocess_this_prefix_noop_when_no_this() {
+        let template = "{{ fred }}";
+        let result = preprocess_this_prefix(template, "resource_name_x").unwrap();
+        assert_eq!(
+            result, template,
+            "template without 'this.' should be unchanged"
+        );
+    }
+
+    #[test]
+    fn test_preprocess_this_prefix_error_when_no_resource_name() {
+        let result = preprocess_this_prefix("{{ this.fred }}", "");
+        assert!(result.is_err(), "empty resource_name should return Err");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("this.") || msg.contains("resource context"),
+            "error message should mention 'this.' or resource context, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_preprocess_this_prefix_multiple_occurrences() {
+        let template = "{{ this.a }} and {{ this.b }}";
+        let result = preprocess_this_prefix(template, "my_res").unwrap();
+        assert_eq!(result, "{{ my_res.a }} and {{ my_res.b }}");
+    }
+
+    #[test]
+    fn test_preprocess_this_prefix_deep_path() {
+        let template = "{{ this.callback.ProgressEvent.RequestToken }}";
+        let result = preprocess_this_prefix(template, "resource_name_x").unwrap();
+        assert_eq!(
+            result,
+            "{{ resource_name_x.callback.ProgressEvent.RequestToken }}"
+        );
+    }
+
+    #[test]
+    fn test_preprocess_this_prefix_in_tag_block() {
+        let template = "{% if this.flag %}yes{% endif %}";
+        let result = preprocess_this_prefix(template, "res").unwrap();
+        assert_eq!(result, "{% if res.flag %}yes{% endif %}");
+    }
+
+    #[test]
+    fn test_preprocess_this_prefix_with_filter() {
+        let template = "{{ this.tags | from_json }}";
+        let result = preprocess_this_prefix(template, "my_vpc").unwrap();
+        assert_eq!(result, "{{ my_vpc.tags | from_json }}");
+    }
+
+    // ── End-to-end rendering tests via TemplateEngine ─────────────────────
+
+    #[test]
+    fn test_this_resolves_resource_scoped_over_global() {
+        // When both a global 'fred' and a resource-scoped 'resource_name_x.fred'
+        // exist, {{ this.fred }} must resolve to the resource-scoped value.
+        let engine = TemplateEngine::new();
+        let mut context = std::collections::HashMap::new();
+        context.insert("fred".to_string(), "global_fred".to_string());
+        context.insert(
+            "resource_name_x.fred".to_string(),
+            "scoped_fred".to_string(),
+        );
+
+        let expanded = preprocess_this_prefix("{{ this.fred }}", "resource_name_x").unwrap();
+        let result = engine
+            .render_with_filters("t", &expanded, &context)
+            .unwrap();
+        assert_eq!(
+            result, "scoped_fred",
+            "this.fred should resolve to the resource-scoped value, not the global"
+        );
+    }
+
+    #[test]
+    fn test_this_resolves_when_only_resource_scoped_exists() {
+        // No global 'fred' - only the resource-scoped one.
+        let engine = TemplateEngine::new();
+        let mut context = std::collections::HashMap::new();
+        context.insert(
+            "resource_name_x.fred".to_string(),
+            "scoped_only".to_string(),
+        );
+
+        let expanded = preprocess_this_prefix("{{ this.fred }}", "resource_name_x").unwrap();
+        let result = engine
+            .render_with_filters("t", &expanded, &context)
+            .unwrap();
+        assert_eq!(result, "scoped_only");
+    }
+
+    #[test]
+    fn test_this_errors_when_only_global_exists_not_resource_scoped() {
+        // this.fred expands to resource_name_x.fred; if only a global 'fred'
+        // exists the render should fail rather than silently using the global.
+        let engine = TemplateEngine::new();
+        let mut context = std::collections::HashMap::new();
+        context.insert("fred".to_string(), "global_fred".to_string());
+        // No resource_name_x.fred in context
+
+        let expanded = preprocess_this_prefix("{{ this.fred }}", "resource_name_x").unwrap();
+        let result = engine.render_with_filters("t", &expanded, &context);
+        assert!(
+            result.is_err(),
+            "this.fred should error when resource_name_x.fred is not in context"
+        );
+    }
+
+    #[test]
+    fn test_this_callback_resolves_same_as_scoped_and_shorthand() {
+        // {{ this.callback.ProgressEvent.RequestToken }} inside resource_name_x
+        // should resolve identically to:
+        //   {{ resource_name_x.callback.ProgressEvent.RequestToken }}  (explicit)
+        //   {{ callback.ProgressEvent.RequestToken }}                  (shorthand)
+        let engine = TemplateEngine::new();
+        let mut context = std::collections::HashMap::new();
+        context.insert(
+            "resource_name_x.callback.ProgressEvent.RequestToken".to_string(),
+            "token-abc".to_string(),
+        );
+        context.insert(
+            "callback.ProgressEvent.RequestToken".to_string(),
+            "token-abc".to_string(),
+        );
+
+        let expanded = preprocess_this_prefix(
+            "{{ this.callback.ProgressEvent.RequestToken }}",
+            "resource_name_x",
+        )
+        .unwrap();
+
+        let via_this = engine
+            .render_with_filters("t1", &expanded, &context)
+            .unwrap();
+        let via_explicit = engine
+            .render_with_filters(
+                "t2",
+                "{{ resource_name_x.callback.ProgressEvent.RequestToken }}",
+                &context,
+            )
+            .unwrap();
+        let via_shorthand = engine
+            .render_with_filters("t3", "{{ callback.ProgressEvent.RequestToken }}", &context)
+            .unwrap();
+
+        assert_eq!(via_this, "token-abc");
+        assert_eq!(
+            via_this, via_explicit,
+            "this.callback should equal resource_name_x.callback"
+        );
+        assert_eq!(
+            via_this, via_shorthand,
+            "this.callback should equal shorthand callback"
+        );
     }
 }
