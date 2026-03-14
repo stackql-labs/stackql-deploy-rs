@@ -23,31 +23,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Pull github provider
+        id: pull-github-provider
+        uses: stackql/stackql-exec@v2.2.3
+        with:
+          query: |
+            REGISTRY PULL github
+          is_command: true 
+
       - name: Fetch contributors
         id: get-contributors
         uses: stackql/stackql-exec@v2.2.3
         with:
-          query: |
-            SELECT login FROM
-            (
-            SELECT login, SUM(contributions) total_contributions FROM
-            (SELECT login, contributions
-            FROM github.repos.contributors
-            WHERE owner = 'stackql'
-            AND repo = 'stackql'
-            UNION
-            SELECT login, contributions
-            FROM github.repos.contributors
-            WHERE owner = 'stackql'
-            AND repo = 'stackql-deploy'
-            UNION
-            SELECT login, contributions
-            FROM github.repos.contributors
-            WHERE owner = 'stackql'
-            AND repo = 'stackql-deploy-rs'            ) t 
-            GROUP BY login
-            ORDER BY total_contributions DESC
-            ) t1
+          query_file_path: ci-scripts/get-contributors.iql
           query_output: csv
 
       - name: Save contributors CSV

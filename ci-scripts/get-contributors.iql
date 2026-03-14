@@ -9,7 +9,12 @@ UNION
 SELECT login, contributions
 FROM github.repos.contributors
 WHERE owner = 'stackql'
-AND repo = 'stackql-deploy') t 
+AND repo = 'stackql-deploy'
+UNION
+SELECT login, contributions
+FROM github.repos.contributors
+WHERE owner = 'stackql'
+AND repo = 'stackql-deploy-rs') t 
 GROUP BY login
 ORDER BY total_contributions DESC
 ) t1
