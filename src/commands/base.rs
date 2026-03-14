@@ -11,7 +11,6 @@ use std::path::Path;
 use std::process;
 
 use log::{debug, error, info};
-use crate::utils::pgwire::PgwireLite;
 
 use crate::core::config::{get_full_context, render_globals, render_string_value};
 use crate::core::env::load_env_vars;
@@ -25,6 +24,7 @@ use crate::core::utils::{
 use crate::resource::manifest::{Manifest, Resource};
 use crate::resource::validation::validate_manifest;
 use crate::template::engine::TemplateEngine;
+use crate::utils::pgwire::PgwireLite;
 
 /// Core state for all command operations, equivalent to Python's StackQLBase.
 pub struct CommandRunner {

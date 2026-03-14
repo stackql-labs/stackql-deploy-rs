@@ -12,8 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use log::{debug, error, info, warn};
-use crate::utils::pgwire::PgwireLite;
 
+use crate::utils::pgwire::PgwireLite;
 use crate::utils::query::{execute_query, QueryResult};
 
 /// Exit with error message. Matches Python's `catch_error_and_exit`.

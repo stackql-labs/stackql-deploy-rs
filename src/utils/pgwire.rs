@@ -100,12 +100,12 @@ impl PgwireLite {
                     }
                     // AuthenticationOk — nothing to do
                 }
-                b'K' => {} // BackendKeyData — ignore
-                b'S' => {} // ParameterStatus — ignore
+                b'K' => {}     // BackendKeyData — ignore
+                b'S' => {}     // ParameterStatus — ignore
                 b'Z' => break, // ReadyForQuery
                 b'E' => return Err(parse_error_fields(&data)),
-                b'N' => {}  // NoticeResponse during startup — ignore
-                _ => {}     // Unknown message type — skip
+                b'N' => {} // NoticeResponse during startup — ignore
+                _ => {}    // Unknown message type — skip
             }
         }
 
@@ -168,7 +168,7 @@ impl PgwireLite {
                 b'E' => {
                     return Err(parse_error_fields(&data));
                 }
-                b'I' => {} // EmptyQueryResponse
+                b'I' => {}     // EmptyQueryResponse
                 b'Z' => break, // ReadyForQuery — done
                 _ => {}
             }
@@ -245,7 +245,7 @@ fn parse_data_row(data: &[u8], columns: &[String]) -> HashMap<String, Value> {
     let num_cols = u16::from_be_bytes([data[0], data[1]]) as usize;
     let mut pos = 2;
 
-    for i in 0..num_cols.min(columns.len()) {
+    for col_name in columns.iter().take(num_cols) {
         if pos + 4 > data.len() {
             break;
         }
@@ -264,7 +264,7 @@ fn parse_data_row(data: &[u8], columns: &[String]) -> HashMap<String, Value> {
             Value::String(s)
         };
 
-        row.insert(columns[i].clone(), value);
+        row.insert(col_name.clone(), value);
     }
     row
 }
