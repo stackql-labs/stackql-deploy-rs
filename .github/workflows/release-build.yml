@@ -23,6 +23,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Pull github provider
+        id: pull-github-provider
+        uses: stackql/stackql-exec@v2.2.3
+        with:
+          query: |
+            REGISTRY PULL github
+          is_command: true 
+
       - name: Fetch contributors
         id: get-contributors
         uses: stackql/stackql-exec@v2.2.3
