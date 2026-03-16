@@ -20,7 +20,9 @@
       "Bash(curl -sI -L \"https://releases.stackql.io/stackql/latest/stackql_linux_arm64.zip\")",
       "Bash(curl -sI -L \"https://releases.stackql.io/stackql/latest/stackql_darwin_multiarch.pkg\")",
       "Bash(python -c \"import yaml; yaml.safe_load\\(open\\(''.github/workflows/ci.yml''\\)\\); print\\(''ci.yml OK''\\)\")",
-      "Bash(python -c \"import yaml; yaml.safe_load\\(open\\(''.github/workflows/release.yml''\\)\\); print\\(''release.yml OK''\\)\")"
+      "Bash(python -c \"import yaml; yaml.safe_load\\(open\\(''.github/workflows/release.yml''\\)\\); print\\(''release.yml OK''\\)\")",
+      "Bash(cargo fmt:*)",
+      "Bash(rustfmt --check src/utils/download.rs src/utils/server.rs)"
     ]
   }
 }

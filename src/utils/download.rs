@@ -176,8 +176,8 @@ fn extract_binary(
             // Search for the stackql binary in the expanded pkg
             // The structure can vary: payload/usr/local/bin/stackql or
             // <subpkg>.pkg/payload/usr/local/bin/stackql
-            let extracted_binary = find_file_recursive(&unpacked_dir, "stackql")
-                .ok_or_else(|| {
+            let extracted_binary =
+                find_file_recursive(&unpacked_dir, "stackql").ok_or_else(|| {
                     AppError::CommandFailed(
                         "Could not find stackql binary in extracted pkg".to_string(),
                     )

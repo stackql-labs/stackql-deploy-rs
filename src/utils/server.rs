@@ -95,7 +95,14 @@ pub fn find_all_running_servers() -> Vec<RunningServer> {
     if cfg!(target_os = "windows") {
         // Use WMIC to get stackql processes with their command lines and PIDs
         let output = ProcessCommand::new("wmic")
-            .args(["process", "where", "name='stackql.exe'", "get", "ProcessId,CommandLine", "/format:list"])
+            .args([
+                "process",
+                "where",
+                "name='stackql.exe'",
+                "get",
+                "ProcessId,CommandLine",
+                "/format:list",
+            ])
             .output();
 
         if let Ok(output) = output {
@@ -243,10 +250,7 @@ fn extract_port_from_cmdline(cmdline: &str) -> Option<u16> {
 pub fn get_server_pid(port: u16) -> Option<u32> {
     // Use find_all_running_servers which handles platform differences
     let servers = find_all_running_servers();
-    servers
-        .iter()
-        .find(|s| s.port == port)
-        .map(|s| s.pid)
+    servers.iter().find(|s| s.port == port).map(|s| s.pid)
 }
 
 /// Start the stackql server with the given options
