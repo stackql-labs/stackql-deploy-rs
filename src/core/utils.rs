@@ -299,24 +299,40 @@ pub fn run_test(
     client: &mut PgwireLite,
     delete_test: bool,
 ) -> bool {
+    run_test_with_fields(resource_name, query, client, delete_test).0
+}
+
+/// Run a test query and capture any non-count fields from the result.
+///
+/// Returns `(bool, Option<HashMap<String, String>>)`:
+/// - The bool indicates whether the test passed (resource exists / is deleted).
+/// - If the exists query returns fields OTHER than `count`, those fields are
+///   captured and returned so the caller can inject them into the template
+///   context (e.g. as `{{ this.identifier }}`).
+pub fn run_test_with_fields(
+    resource_name: &str,
+    query: &str,
+    client: &mut PgwireLite,
+    delete_test: bool,
+) -> (bool, Option<HashMap<String, String>>) {
     let result = run_stackql_query(query, client, true, 0, 5);
 
     if result.is_empty() {
         if delete_test {
             debug!("Delete test result true for [{}]", resource_name);
-            return true;
+            return (true, None);
         } else {
             debug!("Test result false for [{}]", resource_name);
-            return false;
+            return (false, None);
         }
     }
 
     // Check for error markers
     if result[0].contains_key("_stackql_deploy_error") || result[0].contains_key("error") {
         if delete_test {
-            return true;
+            return (true, None);
         }
-        return false;
+        return (false, None);
     }
 
     if let Some(count_str) = result[0].get("count") {
@@ -324,33 +340,52 @@ pub fn run_test(
             if delete_test {
                 if count == 0 {
                     debug!("Delete test result true for [{}]", resource_name);
-                    return true;
+                    return (true, None);
                 } else {
                     debug!(
                         "Delete test result false for [{}], expected 0 got {}",
                         resource_name, count
                     );
-                    return false;
+                    return (false, None);
                 }
             } else if count == 1 {
                 debug!("Test result true for [{}]", resource_name);
-                return true;
+                // Capture any extra fields beyond "count"
+                let extra = extract_non_count_fields(&result[0]);
+                return (true, extra);
             } else {
                 debug!(
                     "Test result false for [{}], expected 1 got {}",
                     resource_name, count
                 );
-                return false;
+                return (false, None);
             }
         }
     }
 
     // If no count field, for non-delete test consider any result as exists
+    // and capture all returned fields
     if !delete_test && !result.is_empty() {
-        return true;
+        let fields = Some(result[0].clone());
+        return (true, fields);
     }
 
-    false
+    (false, None)
+}
+
+/// Extract fields from an exists query result row, excluding the `count` field.
+/// Returns `Some(map)` if there are non-count fields, `None` otherwise.
+fn extract_non_count_fields(row: &HashMap<String, String>) -> Option<HashMap<String, String>> {
+    let extra: HashMap<String, String> = row
+        .iter()
+        .filter(|(k, _)| k.as_str() != "count")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if extra.is_empty() {
+        None
+    } else {
+        Some(extra)
+    }
 }
 
 /// Perform retries on a test query.
@@ -363,13 +398,25 @@ pub fn perform_retries(
     client: &mut PgwireLite,
     delete_test: bool,
 ) -> bool {
+    perform_retries_with_fields(resource_name, query, retries, delay, client, delete_test).0
+}
+
+/// Perform retries on a test query, capturing any non-count fields from the result.
+pub fn perform_retries_with_fields(
+    resource_name: &str,
+    query: &str,
+    retries: u32,
+    delay: u32,
+    client: &mut PgwireLite,
+    delete_test: bool,
+) -> (bool, Option<HashMap<String, String>>) {
     let start = Instant::now();
     let mut attempt = 0;
 
     while attempt < retries {
-        let result = run_test(resource_name, query, client, delete_test);
+        let (result, fields) = run_test_with_fields(resource_name, query, client, delete_test);
         if result {
-            return true;
+            return (true, fields);
         }
         let elapsed = start.elapsed().as_secs();
         info!(
@@ -383,7 +430,7 @@ pub fn perform_retries(
         attempt += 1;
     }
 
-    false
+    (false, None)
 }
 
 /// Show a query in logs if show_queries is enabled.

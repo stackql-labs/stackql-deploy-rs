@@ -9,3 +9,4 @@ stackql.log
 .env
 nohup.out
 contributors.csv
+.claude/

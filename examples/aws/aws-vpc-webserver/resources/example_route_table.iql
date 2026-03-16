@@ -1,0 +1,39 @@
+/*+ exists */
+SELECT split_part(ResourceARN, '/', 2) as identifier
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_route_table"]}]'
+AND ResourceTypeFilters = '["ec2:route-table"]';
+
+/*+ statecheck, retries=5, retry_delay=5 */
+SELECT COUNT(*) as count FROM
+(
+SELECT route_table_id, vpc_id
+FROM awscc.ec2.route_tables
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+) t
+WHERE vpc_id = '{{ vpc_id }}';
+
+/*+ create */
+INSERT INTO awscc.ec2.route_tables (
+ Tags,
+ VpcId,
+ region
+)
+SELECT
+ '{{ route_table_tags }}',
+ '{{ vpc_id }}',
+ '{{ region }}';
+
+/*+ exports, retries=5, retry_delay=5 */
+SELECT split_part(ResourceARN, '/', 2) as route_table_id
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_route_table"]}]'
+AND ResourceTypeFilters = '["ec2:route-table"]';
+
+/*+ delete */
+DELETE FROM awscc.ec2.route_tables
+WHERE data__Identifier = '{{ route_table_id }}'
+AND region = '{{ region }}';

@@ -1,0 +1,48 @@
+/*+ exists */
+SELECT split_part(ResourceARN, '/', 2) as identifier
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_web_server"]}]'
+AND ResourceTypeFilters = '["ec2:instance"]';
+
+/*+ statecheck, retries=10, retry_delay=10 */
+SELECT COUNT(*) as count FROM
+(
+SELECT instance_id, instance_type, subnet_id, image_id
+FROM awscc.ec2.instances
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+) t
+WHERE instance_type = '{{ instance_type }}'
+AND subnet_id = '{{ instance_subnet_id }}';
+
+/*+ create */
+INSERT INTO awscc.ec2.instances (
+ ImageId,
+ InstanceType,
+ SubnetId,
+ SecurityGroupIds,
+ UserData,
+ Tags,
+ region
+)
+SELECT
+ '{{ ami_id }}',
+ '{{ instance_type }}',
+ '{{ instance_subnet_id }}',
+ '{{ sg_ids }}',
+ '{{ user_data | base64_encode }}',
+ '{{ instance_tags }}',
+ '{{ region }}';
+
+/*+ exports, retries=10, retry_delay=10 */
+SELECT split_part(ResourceARN, '/', 2) as instance_id
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_web_server"]}]'
+AND ResourceTypeFilters = '["ec2:instance"]';
+
+/*+ delete */
+DELETE FROM awscc.ec2.instances
+WHERE data__Identifier = '{{ instance_id }}'
+AND region = '{{ region }}';

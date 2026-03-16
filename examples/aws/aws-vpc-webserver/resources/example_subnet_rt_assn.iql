@@ -1,0 +1,16 @@
+/*+ createorupdate */
+INSERT INTO awscc.ec2.subnet_route_table_associations (
+ RouteTableId,
+ SubnetId,
+ region
+)
+SELECT
+ '{{ route_table_id }}',
+ '{{ subnet_id }}',
+ '{{ region }}';
+
+/*+ exports, retries=3, retry_delay=5 */
+SELECT route_table_id
+FROM awscc.ec2.route_tables
+WHERE Identifier = '{{ route_table_id }}'
+AND region = '{{ region }}';

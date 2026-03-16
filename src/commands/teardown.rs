@@ -235,19 +235,16 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
             continue;
         };
 
-        // Get delete query - render JIT
-        let (delete_query, delete_retries, delete_retry_delay) =
-            if let Some(dq) = resource_queries.get("delete") {
-                let rendered =
-                    runner.render_query(&resource.name, "delete", &dq.template, &full_context);
-                (rendered, dq.options.retries, dq.options.retry_delay)
-            } else {
-                info!(
-                    "delete query not defined for [{}], skipping...",
-                    resource.name
-                );
-                continue;
-            };
+        // Check if delete query template exists (don't render yet — may need
+        // this.* fields from the exists check).
+        let has_delete_query = resource_queries.contains_key("delete");
+        if !has_delete_query {
+            info!(
+                "delete query not defined for [{}], skipping...",
+                resource.name
+            );
+            continue;
+        }
 
         // Pre-delete check
         let ignore_errors = res_type == "multi";
@@ -255,7 +252,7 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
             info!("pre-delete check not supported for multi resources, skipping...");
             true
         } else {
-            runner.check_if_resource_exists(
+            let (exists, fields) = runner.check_if_resource_exists(
                 resource,
                 &exists_query_str,
                 exists_retries,
@@ -263,8 +260,23 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
                 dry_run,
                 show_queries,
                 false,
-            )
+            );
+            // If the exists query captured fields, inject them as this.* so
+            // the delete query can reference them.
+            if let Some(ref f) = fields {
+                for (k, v) in f {
+                    full_context.insert(format!("{}.{}", &resource.name, k), v.clone());
+                }
+            }
+            exists
         };
+
+        // Render the delete query now (after exists fields are available).
+        let dq = resource_queries.get("delete").unwrap();
+        let delete_query =
+            runner.render_query(&resource.name, "delete", &dq.template, &full_context);
+        let delete_retries = dq.options.retries;
+        let delete_retry_delay = dq.options.retry_delay;
 
         // Delete
         if resource_exists {
@@ -323,7 +335,7 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
         }
 
         // Confirm deletion
-        let resource_deleted = runner.check_if_resource_exists(
+        let (resource_deleted, _) = runner.check_if_resource_exists(
             resource,
             &exists_query_str,
             postdelete_retries,

@@ -1,0 +1,43 @@
+/*+ exists */
+SELECT split_part(ResourceARN, '/', 2) as identifier
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_subnet"]}]'
+AND ResourceTypeFilters = '["ec2:subnet"]';
+
+/*+ statecheck, retries=5, retry_delay=5 */
+SELECT COUNT(*) as count FROM
+(
+SELECT subnet_id, vpc_id, cidr_block, map_public_ip_on_launch
+FROM awscc.ec2.subnets
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+) t
+WHERE cidr_block = '{{ subnet_cidr_block }}'
+AND vpc_id = '{{ vpc_id }}';
+
+/*+ create */
+INSERT INTO awscc.ec2.subnets (
+ VpcId,
+ CidrBlock,
+ MapPublicIpOnLaunch,
+ Tags,
+ region
+)
+SELECT
+ '{{ vpc_id }}',
+ '{{ subnet_cidr_block }}',
+ true,
+ '{{ subnet_tags }}',
+ '{{ region }}';
+
+/*+ exports, retries=5, retry_delay=5 */
+SELECT subnet_id, availability_zone
+FROM awscc.ec2.subnets
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}';
+
+/*+ delete */
+DELETE FROM awscc.ec2.subnets
+WHERE data__Identifier = '{{ subnet_id }}'
+AND region = '{{ region }}';

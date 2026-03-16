@@ -1,0 +1,36 @@
+/*+ exists */
+SELECT split_part(ResourceARN, '/', 2) as identifier
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_inet_gateway"]}]'
+AND ResourceTypeFilters = '["ec2:internet-gateway"]';
+
+/*+ statecheck, retries=5, retry_delay=5 */
+SELECT COUNT(*) as count FROM
+(
+SELECT internet_gateway_id
+FROM awscc.ec2.internet_gateways
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+) t;
+
+/*+ create */
+INSERT INTO awscc.ec2.internet_gateways (
+ Tags,
+ region
+)
+SELECT
+ '{{ inet_gateway_tags }}',
+ '{{ region }}';
+
+/*+ exports, retries=5, retry_delay=5 */
+SELECT split_part(ResourceARN, '/', 2) as internet_gateway_id
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_inet_gateway"]}]'
+AND ResourceTypeFilters = '["ec2:internet-gateway"]';
+
+/*+ delete */
+DELETE FROM awscc.ec2.internet_gateways
+WHERE data__Identifier = '{{ internet_gateway_id }}'
+AND region = '{{ region }}';

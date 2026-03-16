@@ -96,6 +96,26 @@ pub fn execute(matches: &ArgMatches) {
     }
 }
 
+/// Render the statecheck query template with the given context.
+macro_rules! render_statecheck {
+    ($runner:expr, $resource_queries:expr, $resource:expr, $ctx:expr) => {
+        $resource_queries.get("statecheck").map(|q| {
+            let rendered =
+                $runner.render_query(&$resource.name, "statecheck", &q.template, $ctx);
+            (rendered, q.options.clone())
+        })
+    };
+}
+
+/// Render the exports query template with the given context.
+macro_rules! render_exports {
+    ($runner:expr, $resource_queries:expr, $resource:expr, $ctx:expr) => {
+        $resource_queries
+            .get("exports")
+            .map(|q| $runner.render_query(&$resource.name, "exports", &q.template, $ctx))
+    };
+}
+
 /// Main build workflow matching Python's StackQLProvisioner.run().
 fn run_build(
     runner: &mut CommandRunner,
@@ -206,23 +226,31 @@ fn run_build(
             }
         }
 
-        // Test queries - render only the ones we need
+        // Render the exists query eagerly (it never depends on this.* fields)
         let exists_query = resource_queries.get("exists").map(|q| {
             let rendered =
                 runner.render_query(&resource.name, "exists", &q.template, &full_context);
             (rendered, q.options.clone())
         });
-        let statecheck_query = resource_queries.get("statecheck").map(|q| {
-            let rendered =
-                runner.render_query(&resource.name, "statecheck", &q.template, &full_context);
-            (rendered, q.options.clone())
-        });
-        let mut exports_query_str: Option<String> = resource_queries
-            .get("exports")
-            .map(|q| runner.render_query(&resource.name, "exports", &q.template, &full_context));
+
+        // Statecheck and exports rendering is deferred until after the exists
+        // check runs, because the exists query may capture fields (e.g.
+        // `identifier`) that should be available as {{ this.<field> }} in
+        // subsequent queries.
+        let mut full_context = full_context;
         let exports_opts = resource_queries.get("exports");
         let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
         let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
+
+        // Only eagerly render exports if there's no exists query; otherwise
+        // defer until after exists has captured this.* fields.
+        let mut exports_query_str: Option<String> = if resource_queries.contains_key("exists") {
+            None // will be rendered after exists check injects this.* fields
+        } else {
+            resource_queries
+                .get("exports")
+                .map(|q| runner.render_query(&resource.name, "exports", &q.template, &full_context))
+        };
 
         // Handle query type with no exports
         if res_type == "query" && exports_query_str.is_none() {
@@ -242,14 +270,30 @@ fn run_build(
             let mut resource_exists = false;
             let mut is_correct_state = false;
 
+            /// Inject fields captured by the exists query into the context as
+            /// `this.<field>` variables (scoped to the resource name), so that
+            /// statecheck / exports / delete templates can reference the
+            /// discovered identifiers.
+            fn apply_exists_fields(
+                fields: Option<HashMap<String, String>>,
+                resource_name: &str,
+                full_context: &mut HashMap<String, String>,
+            ) {
+                if let Some(ref f) = fields {
+                    for (k, v) in f {
+                        full_context.insert(format!("{}.{}", resource_name, k), v.clone());
+                    }
+                }
+            }
+
             // State checking logic
             if has_createorupdate {
                 // Skip all existence and state checks for createorupdate
-            } else if statecheck_query.is_some() {
+            } else if resource_queries.contains_key("statecheck") {
                 // Flow 1: Traditional flow when statecheck exists
                 if let Some(ref eq) = exists_query {
                     let eq_opts = resource_queries.get("exists").unwrap();
-                    resource_exists = runner.check_if_resource_exists(
+                    let (exists, fields) = runner.check_if_resource_exists(
                         resource,
                         &eq.0,
                         eq_opts.options.retries,
@@ -258,8 +302,16 @@ fn run_build(
                         show_queries,
                         false,
                     );
+                    resource_exists = exists;
+
+                    // If the exists query captured fields, inject them and
+                    // re-render downstream queries.
+                    if fields.is_some() {
+                        apply_exists_fields(fields, &resource.name, &mut full_context);
+                    }
                 } else {
-                    // Use statecheck as exists check
+                    // Use statecheck as exists check (render with current ctx)
+                    let statecheck_query = render_statecheck!(runner, resource_queries, resource, &full_context);
                     let sq = statecheck_query.as_ref().unwrap();
                     let sq_opts = resource_queries.get("statecheck").unwrap();
                     is_correct_state = runner.check_if_resource_is_correct_state(
@@ -282,6 +334,8 @@ fn run_build(
                         );
                         is_correct_state = true;
                     } else {
+                        // Re-render statecheck with (possibly enriched) context
+                        let statecheck_query = render_statecheck!(runner, resource_queries, resource, &full_context);
                         let sq = statecheck_query.as_ref().unwrap();
                         let sq_opts = resource_queries.get("statecheck").unwrap();
                         is_correct_state = runner.check_if_resource_is_correct_state(
@@ -294,7 +348,10 @@ fn run_build(
                         );
                     }
                 }
-            } else if let Some(ref eq_str) = exports_query_str {
+
+                // Re-render exports with enriched context
+                exports_query_str = render_exports!(runner, resource_queries, resource, &full_context);
+            } else if exports_query_str.is_some() {
                 // Flow 2: Optimized flow using exports as proxy
                 info!(
                     "trying exports query first (fast-fail) for optimal validation for [{}]",
@@ -302,7 +359,7 @@ fn run_build(
                 );
                 let (state, proxy_result) = runner.check_state_using_exports_proxy(
                     resource,
-                    eq_str,
+                    exports_query_str.as_ref().unwrap(),
                     1,
                     0,
                     dry_run,
@@ -326,7 +383,7 @@ fn run_build(
 
                     if let Some(ref eq) = exists_query {
                         let eq_opts = resource_queries.get("exists").unwrap();
-                        resource_exists = runner.check_if_resource_exists(
+                        let (exists, fields) = runner.check_if_resource_exists(
                             resource,
                             &eq.0,
                             eq_opts.options.retries,
@@ -335,6 +392,12 @@ fn run_build(
                             show_queries,
                             false,
                         );
+                        resource_exists = exists;
+
+                        if fields.is_some() {
+                            apply_exists_fields(fields, &resource.name, &mut full_context);
+                            exports_query_str = render_exports!(runner, resource_queries, resource, &full_context);
+                        }
                     } else {
                         resource_exists = false;
                     }
@@ -342,7 +405,7 @@ fn run_build(
             } else if let Some(ref eq) = exists_query {
                 // Flow 3: Basic flow with only exists query
                 let eq_opts = resource_queries.get("exists").unwrap();
-                resource_exists = runner.check_if_resource_exists(
+                let (exists, fields) = runner.check_if_resource_exists(
                     resource,
                     &eq.0,
                     eq_opts.options.retries,
@@ -351,6 +414,12 @@ fn run_build(
                     show_queries,
                     false,
                 );
+                resource_exists = exists;
+
+                if fields.is_some() {
+                    apply_exists_fields(fields, &resource.name, &mut full_context);
+                    exports_query_str = render_exports!(runner, resource_queries, resource, &full_context);
+                }
             } else {
                 catch_error_and_exit(
                     "iql file must include either 'exists', 'statecheck', or 'exports' anchor.",
@@ -467,7 +536,7 @@ fn run_build(
 
             // Post-deploy state check
             if is_created_or_updated {
-                if let Some(ref sq) = statecheck_query {
+                if let Some(sq) = render_statecheck!(runner, resource_queries, resource, &full_context) {
                     let sq_opts = resource_queries.get("statecheck").unwrap();
                     is_correct_state = runner.check_if_resource_is_correct_state(
                         resource,

@@ -1,0 +1,44 @@
+/*+ exists */
+SELECT split_part(ResourceARN, '/', 2) as identifier
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_vpc"]}]'
+AND ResourceTypeFilters = '["ec2:vpc"]';
+
+/*+ statecheck, retries=5, retry_delay=5 */
+SELECT COUNT(*) as count FROM
+(
+SELECT vpc_id, cidr_block
+FROM awscc.ec2.vpcs
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+) t
+WHERE cidr_block = '{{ vpc_cidr_block }}';
+
+/*+ create */
+INSERT INTO awscc.ec2.vpcs (
+ CidrBlock,
+ Tags,
+ EnableDnsSupport,
+ EnableDnsHostnames,
+ region
+)
+SELECT
+ '{{ vpc_cidr_block }}',
+ '{{ vpc_tags }}',
+ true,
+ true,
+ '{{ region }}';
+
+/*+ exports, retries=5, retry_delay=5 */
+SELECT split_part(ResourceARN, '/', 2) as vpc_id,
+'{{ vpc_cidr_block }}' as vpc_cidr_block
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_vpc"]}]'
+AND ResourceTypeFilters = '["ec2:vpc"]';
+
+/*+ delete */
+DELETE FROM awscc.ec2.vpcs
+WHERE data__Identifier = '{{ vpc_id }}'
+AND region = '{{ region }}';

@@ -33,7 +33,13 @@ The types of queries defined in resource files are detailed in the following sec
 
 ### `exists`
 
-`exists` queries are StackQL `SELECT` statements designed to test the existence of a resource by its designated identifier (does not test the desired state).  This is used to determine whether a `create` (`INSERT`) or `update` (`UPDATE`) is required.  A `exists` query needs to return a single row with a single field named `count`.  A `count` value of `1` indicates that the resource exists, a value of `0` would indicate that the resource does not exist.
+`exists` queries are StackQL `SELECT` statements designed to test the existence of a resource by its designated identifier (does not test the desired state).  This is used to determine whether a `create` (`INSERT`) or `update` (`UPDATE`) is required.
+
+An `exists` query can return results in one of two forms:
+
+#### Count-based existence check
+
+The query returns a single row with a single field named `count`.  A `count` value of `1` indicates that the resource exists, a value of `0` would indicate that the resource does not exist.
 
 ```sql
 /*+ exists */
@@ -41,6 +47,49 @@ SELECT COUNT(*) as count FROM google.compute.networks
 WHERE name = '{{ vpc_name }}'
 AND project = '{{ project }}'
 ```
+
+#### Identifier-based existence check
+
+Alternatively, the query can return a field **other than** `count` (for example `identifier`).  If the query returns a row, the resource is considered to exist.  If no rows are returned, the resource does not exist.
+
+Any non-`count` fields returned are automatically captured and made available as **resource-scoped variables** for all subsequent queries within the same resource (`statecheck`, `exports`, `delete`).  These captured fields are accessible using the `{{ this.<field_name> }}` syntax, which expands to `{{ <resource_name>.<field_name> }}`.
+
+This pattern is particularly useful when you need to **discover a resource identifier** (for example, from a tag-based lookup) and then use that identifier to query the resource's actual properties in a `statecheck` or `exports` query.
+
+```sql
+/*+ exists */
+SELECT split_part(ResourceARN, '/', 2) as identifier
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_vpc"]}]'
+AND ResourceTypeFilters = '["ec2:vpc"]'
+```
+
+In the example above, when the resource exists the `identifier` field (e.g. `vpc-0abc123def456`) is captured and available as `{{ this.identifier }}` in subsequent queries:
+
+```sql
+/*+ statecheck, retries=5, retry_delay=5 */
+SELECT COUNT(*) as count FROM
+(
+SELECT vpc_id, cidr_block
+FROM awscc.ec2.vpcs
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+) t
+WHERE cidr_block = '{{ vpc_cidr_block }}'
+```
+
+:::tip
+
+The identifier capture pattern enables a powerful two-step workflow for providers like `awscc` (AWS Cloud Control) where resources are identified by tags rather than names:
+
+1. **`exists`** — find the resource via a tag-based lookup (e.g. `awscc.tagging.tagged_resources`), capturing the cloud-assigned identifier
+2. **`statecheck`** — use `{{ this.identifier }}` to query the resource directly and verify its properties match the desired state
+3. **`exports`** — use `{{ this.identifier }}` to query the resource and extract values for downstream resources
+
+This avoids the need for complex JOINs or subqueries between the tagging service and the resource provider.
+
+:::
 
 `preflight` is an alias for `exists` for backwards compatability, this will be deprecated in a future release.
 
@@ -291,6 +340,7 @@ In addition to the properties defined in the manifest, StackQL Deploy injects a 
 | `idempotency_token` | Per-resource | Stable UUID v4 for this resource for the lifetime of the session |
 | `this.idempotency_token` | Per-resource (inside `.iql`) | Preferred alias — expands to `{{ <resource_name>.idempotency_token }}` |
 | `<resource_name>.idempotency_token` | Global | Scoped form, usable in any downstream resource |
+| `this.<field>` | Per-resource (inside `.iql`) | Fields captured from `exists` queries (see [identifier-based existence check](#identifier-based-existence-check)) |
 
 ### `idempotency_token`
 
@@ -441,6 +491,61 @@ The corresponding manifest entry requires **no** `callback` section — callback
     exports:
       - bucket_name
 ```
+
+### Tag-based identifier discovery example (`awscc`)
+
+This example demonstrates the **identifier capture** pattern for AWS Cloud Control (`awscc`) resources, where resources are discovered via the `awscc.tagging.tagged_resources` service.  The `exists` query returns the resource identifier (extracted from the ARN), which is then used in `statecheck` and `exports` queries via `{{ this.identifier }}`.
+
+<File name='example_subnet.iql'>
+
+```sql
+/*+ exists */
+SELECT split_part(ResourceARN, '/', 2) as identifier
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_subnet"]}]'
+AND ResourceTypeFilters = '["ec2:subnet"]'
+
+/*+ statecheck, retries=5, retry_delay=5 */
+SELECT COUNT(*) as count FROM
+(
+SELECT subnet_id, vpc_id, cidr_block
+FROM awscc.ec2.subnets
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+) t
+WHERE cidr_block = '{{ subnet_cidr_block }}'
+AND vpc_id = '{{ vpc_id }}'
+
+/*+ create */
+INSERT INTO awscc.ec2.subnets (
+ VpcId, CidrBlock, MapPublicIpOnLaunch, Tags, region
+)
+SELECT
+ '{{ vpc_id }}', '{{ subnet_cidr_block }}', true,
+ '{{ subnet_tags }}', '{{ region }}'
+
+/*+ exports, retries=5, retry_delay=5 */
+SELECT subnet_id, availability_zone
+FROM awscc.ec2.subnets
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+
+/*+ delete */
+DELETE FROM awscc.ec2.subnets
+WHERE data__Identifier = '{{ subnet_id }}'
+AND region = '{{ region }}'
+```
+
+</File>
+
+In this example:
+
+1. **`exists`** — queries `awscc.tagging.tagged_resources` filtered by stack-level tags and resource type.  If a matching resource is found, `identifier` is captured (e.g. `subnet-0abc123...`).
+2. **`statecheck`** — uses `{{ this.identifier }}` to query `awscc.ec2.subnets` directly and verify the CIDR block and VPC ID match the desired state.
+3. **`create`** — standard `INSERT` with tags that include `stackql:stack-name`, `stackql:stack-env`, and `stackql:resource-name` for future discovery.
+4. **`exports`** — uses `{{ this.identifier }}` to query the resource and extract `subnet_id` and `availability_zone` for downstream resources.
+5. **`delete`** — uses the exported `subnet_id` (from the `exports` query, not `this.identifier`) with `data__Identifier`.
 
 ### `query` type example
 

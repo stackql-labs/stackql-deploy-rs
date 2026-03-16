@@ -1,0 +1,48 @@
+/*+ exists */
+SELECT split_part(ResourceARN, '/', 2) as identifier
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_security_group"]}]'
+AND ResourceTypeFilters = '["ec2:security-group"]';
+
+/*+ statecheck, retries=5, retry_delay=5 */
+SELECT COUNT(*) as count FROM
+(
+SELECT id, group_name, group_description, vpc_id
+FROM awscc.ec2.security_groups
+WHERE Identifier = '{{ this.identifier }}'
+AND region = '{{ region }}'
+) t
+WHERE group_name = '{{ group_name }}'
+AND vpc_id = '{{ vpc_id }}';
+
+/*+ create */
+INSERT INTO awscc.ec2.security_groups (
+ GroupName,
+ GroupDescription,
+ VpcId,
+ SecurityGroupIngress,
+ SecurityGroupEgress,
+ Tags,
+ region
+)
+SELECT
+ '{{ group_name }}',
+ '{{ group_description }}',
+ '{{ vpc_id }}',
+ '{{ security_group_ingress }}',
+ '{{ security_group_egress }}',
+ '{{ sg_tags }}',
+ '{{ region }}';
+
+/*+ exports, retries=5, retry_delay=5 */
+SELECT split_part(ResourceARN, '/', 2) as security_group_id
+FROM awscc.tagging.tagged_resources
+WHERE region = '{{ region }}'
+AND TagFilters = '[{"Key":"stackql:stack-name","Values":["{{ stack_name }}"]},{"Key":"stackql:stack-env","Values":["{{ stack_env }}"]},{"Key":"stackql:resource-name","Values":["example_security_group"]}]'
+AND ResourceTypeFilters = '["ec2:security-group"]';
+
+/*+ delete */
+DELETE FROM awscc.ec2.security_groups
+WHERE data__Identifier = '{{ security_group_id }}'
+AND region = '{{ region }}';
