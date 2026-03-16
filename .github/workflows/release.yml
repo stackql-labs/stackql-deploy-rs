@@ -9,33 +9,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Fetch contributor list via StackQL and upload as a workflow artifact so all
-  # matrix build jobs can embed it into the binary at compile time.
-  prepare:
-    name: Prepare
+
+  # Fail fast if the tag version does not match the version in Cargo.toml
+  verify:
+    name: Verify version
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+      - name: Check tag matches Cargo.toml version
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG=${GITHUB_REF_NAME#v}
+          if [ "$CARGO_VERSION" != "$TAG" ]; then
+            echo "Tag ($TAG) does not match Cargo.toml version ($CARGO_VERSION)"
+            exit 1
+          fi
+          echo "Version check passed: $CARGO_VERSION"
 
+  # Fetch contributor list via StackQL and upload as a workflow artifact so all
+  # matrix build jobs can embed it into the binary at compile time
+  prepare:
+    name: Prepare
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
       - name: Pull github provider
-        id: pull-github-provider
         uses: stackql/stackql-exec@v2
         with:
-          query: |
-            REGISTRY PULL github
+          query: REGISTRY PULL github
           is_command: true
-
       - name: Fetch contributors
         id: get-contributors
         uses: stackql/stackql-exec@v2
         with:
           query_file_path: ci-scripts/get-contributors.iql
           query_output: csv
-
       - name: Save contributors CSV
         run: echo "${{ steps.get-contributors.outputs.stackql-query-results }}" > contributors.csv
-
       - name: Upload contributors artifact
         uses: actions/upload-artifact@v7
         with:
@@ -54,86 +65,68 @@ jobs:
             artifact-name: stackql-deploy-linux-x86_64
             archive: tar.gz
             use-cross: false
-
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             artifact-name: stackql-deploy-linux-arm64
             archive: tar.gz
             use-cross: true
-
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             artifact-name: stackql-deploy-windows-x86_64
             archive: zip
             use-cross: false
-
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact-name: stackql-deploy-macos-arm64
             archive: tar.gz
             use-cross: false
-
           - target: x86_64-apple-darwin
             os: macos-latest
             artifact-name: stackql-deploy-macos-x86_64
             archive: tar.gz
             use-cross: false
-
     runs-on: ${{ matrix.os }}
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Download contributors CSV
-        uses: actions/download-artifact@v8
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
         with:
           name: contributors-csv
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-
       - name: Install cross
         if: matrix.use-cross == true
         run: cargo install cross --git https://github.com/cross-rs/cross
-
+      - name: Set contributors env
+        shell: bash
+        run: |
+          CONTRIBUTORS=$(tr '\n' ',' < contributors.csv | sed 's/,$//')
+          echo "CONTRIBUTORS=$CONTRIBUTORS" >> $GITHUB_ENV
       - name: Build (cross)
         if: matrix.use-cross == true
         run: cross build --release --target ${{ matrix.target }}
-
       - name: Build (native)
         if: matrix.use-cross == false
         run: cargo build --release --target ${{ matrix.target }}
-
-      # Strip Linux and macOS binaries to reduce size.
-      # Cross-compiled ARM64 Linux is stripped by cross automatically.
-      - name: Strip binary (native Linux / macOS)
+      - name: Strip binary (Linux / macOS native)
         if: matrix.os != 'windows-latest' && matrix.use-cross == false
         run: strip target/${{ matrix.target }}/release/stackql-deploy
-
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
         run: |
           tar -czf ${{ matrix.artifact-name }}.tar.gz \
             -C target/${{ matrix.target }}/release stackql-deploy
-
-      - name: Package (zip) — Windows
+      - name: Package (zip)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
           Compress-Archive `
             -Path target/${{ matrix.target }}/release/stackql-deploy.exe `
             -DestinationPath ${{ matrix.artifact-name }}.zip
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact-name }}
           path: ${{ matrix.artifact-name }}.*
@@ -150,9 +143,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts/
-          # exclude the contributors CSV — only binary archives needed
           pattern: stackql-deploy-*
-
       - name: Collect archives and generate SHA256SUMS
         run: |
           mkdir -p dist
@@ -160,7 +151,6 @@ jobs:
             -exec mv {} dist/ \;
           cd dist
           sha256sum * | tee SHA256SUMS
-
       - name: GH Release
         uses: softprops/action-gh-release@v2.6.0
         with:
@@ -187,7 +177,7 @@ jobs:
               that previously took seconds to initialise now start instantly.
             - **Smaller install footprint** — the stripped Linux x86_64 binary is under 10 MB;
               no transitive Python dependencies to manage.
-            - **Statically linked on Linux** — works on any glibc ≥ 2.17 distro without
+            - **Statically linked on Linux** — works on any glibc >= 2.17 distro without
               installing extra system libraries.
             - **Native Windows and macOS ARM64 support** — pre-built for all five major targets
               (see assets below).
@@ -234,21 +224,39 @@ jobs:
             cargo install stackql-deploy
             ```
 
+  # --no-verify skips the verification build that cargo publish runs by default.
+  # That build fails because build.rs writes contributors.csv into the package
+  # root (outside OUT_DIR) when the file is absent, which it always is inside
+  # the clean tarball sandbox. The binary has already been fully built and
+  # verified in the build job above.
   publish:
     name: Publish to crates.io
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
       - name: Publish to crates.io
-        # --no-verify skips the redundant verification build that cargo publish
-        # performs by default. That build fails because build.rs writes
-        # contributors.csv into the package root (outside OUT_DIR) when the file
-        # is absent — which it always is inside the clean tarball sandbox.
-        # The binary has already been fully built and tested in the build job.
         run: cargo publish --no-verify --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Builds docs with private items visible and deploys to GitHub Pages.
+  # docs.rs also picks up the crate automatically from the publish step above,
+  # but only renders a minimal page for binary-only crates. GitHub Pages gives
+  # the full internal module tree.
+  # Published at: https://stackql.github.io/stackql-deploy/stackql_deploy/
+  docs:
+    name: Publish Docs
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build docs
+        run: cargo doc --no-deps --document-private-items
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc

@@ -46,13 +46,24 @@ stackql-deploy info
 outputs...
 
 ```plaintext
-stackql-deploy version: 0.1.0
-stackql version       : v0.6.002
-stackql binary path   : /usr/local/bin/stackql
-platform              : Linux x86_64
+┌────────────────────────────────┐
+│ Getting program information... │
+└────────────────────────────────┘
+stackql-deploy CLI
+  Version: 0.1.0
 
-installed providers:  :
-aws                   : v24.07.00246
-azure                 : v24.06.00242
-google                : v24.06.00236
+StackQL Library
+  Version: v0.10.383
+  SHA: 3374f33
+  Platform: Linux
+  Binary Path: /mnt/c/LocalGitRepos/stackql/stackql-deploy-rs/stackql
+
+Local StackQL Servers
+  None
+
+Installed Providers
+  awscc v26.02.00373
+  databricks_account v26.02.00371
+  databricks_workspace v26.02.00371
+  github v25.07.00320
 ```

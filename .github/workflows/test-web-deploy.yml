@@ -1,0 +1,32 @@
+name: Test deployment
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'website/**'
+      - '.github/workflows/ci-website.yml'
+
+jobs:
+  test-deploy:
+    name: Test deployment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: website/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+        working-directory: website
+
+      - name: Test build website
+        run: yarn build
+        working-directory: website

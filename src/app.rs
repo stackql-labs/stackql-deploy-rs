@@ -20,8 +20,8 @@
 /// Application name
 pub const APP_NAME: &str = "stackql-deploy";
 
-/// Application version
-pub const APP_VERSION: &str = "0.1.0";
+/// Application version (sourced from Cargo.toml)
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Application author
 pub const APP_AUTHOR: &str = "Jeffrey Aven <javen@stackql.io>";

@@ -67,7 +67,7 @@ pub fn execute() {
 
     // Print information
     println!("{}", "stackql-deploy CLI".green().bold());
-    println!("  Version: 0.1.0\n");
+    println!("  Version: {}\n", crate::app::APP_VERSION);
 
     println!("{}", "StackQL Library".green().bold());
     println!("  Version: {}", version_info.version);
