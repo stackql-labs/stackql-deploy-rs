@@ -12,12 +12,7 @@ const sidebars = {
       id: 'index', 
       label: 'Welcome',
     },
-    {
-      type: 'doc',
-      id: 'installing-stackql-deploy',
-      label: 'Install',
-    },
-    {
+{
       type: 'doc',
       id: 'getting-started',
       label: 'Getting Started',
