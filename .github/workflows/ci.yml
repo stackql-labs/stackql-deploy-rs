@@ -183,11 +183,17 @@ jobs:
           - os: ubuntu-latest
             artifact-name: stackql-deploy-linux-x86_64
             archive: tar.gz
+          - os: ubuntu-24.04-arm
+            artifact-name: stackql-deploy-linux-arm64
+            archive: tar.gz
           - os: windows-latest
             artifact-name: stackql-deploy-windows-x86_64
             archive: zip
           - os: macos-latest
             artifact-name: stackql-deploy-macos-arm64
+            archive: tar.gz
+          - os: macos-26-intel
+            artifact-name: stackql-deploy-macos-x86_64
             archive: tar.gz
     runs-on: ${{ matrix.os }}
     steps:
