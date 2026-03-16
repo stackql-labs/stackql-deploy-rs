@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'src/**'
+      - 'build.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'build.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  # Runs on: push to any non-main branch, PR to main
+  lint:
+    name: Lint
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Run lint
+        run: bash ci-scripts/lint.sh
+
+  # Runs on: push to any non-main branch, PR to main
+  test:
+    name: Tests
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: bash ci-scripts/test.sh
+
+  # Runs on: PR to main only — single-platform release build to catch compile errors pre-merge
+  build-check:
+    name: Build Check
+    if: github.event_name == 'pull_request'
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Create placeholder contributors file
+        run: touch contributors.csv
+      - name: Build release
+        run: bash ci-scripts/build.sh
+
+  # Runs on: push to main — fetch contributors for build-time injection
+  prepare:
+    name: Prepare
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Pull github provider
+        uses: stackql/stackql-exec@v2
+        with:
+          query: REGISTRY PULL github
+          is_command: true
+      - name: Fetch contributors
+        id: get-contributors
+        uses: stackql/stackql-exec@v2
+        with:
+          query_file_path: ci-scripts/get-contributors.iql
+          query_output: csv
+      - name: Save contributors CSV
+        run: echo "${{ steps.get-contributors.outputs.stackql-query-results }}" > contributors.csv
+      - name: Upload contributors artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: contributors-csv
+          path: contributors.csv
+
+  # Runs on: push to main — full matrix build after contributors are fetched
+  build:
+    name: Build (${{ matrix.target }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact-name: stackql-deploy-linux-x86_64
+            archive: tar.gz
+            use-cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact-name: stackql-deploy-linux-arm64
+            archive: tar.gz
+            use-cross: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact-name: stackql-deploy-windows-x86_64
+            archive: zip
+            use-cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact-name: stackql-deploy-macos-arm64
+            archive: tar.gz
+            use-cross: false
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact-name: stackql-deploy-macos-x86_64
+            archive: tar.gz
+            use-cross: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: contributors-csv
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cross
+        if: matrix.use-cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Set contributors env
+        shell: bash
+        run: |
+          CONTRIBUTORS=$(tr '\n' ',' < contributors.csv | sed 's/,$//')
+          echo "CONTRIBUTORS=$CONTRIBUTORS" >> $GITHUB_ENV
+      - name: Build (cross)
+        if: matrix.use-cross == true
+        run: cross build --release --target ${{ matrix.target }}
+      - name: Build (native)
+        if: matrix.use-cross == false
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Strip binary (Linux / macOS native)
+        if: matrix.os != 'windows-latest' && matrix.use-cross == false
+        run: strip target/${{ matrix.target }}/release/stackql-deploy
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          tar -czf ${{ matrix.artifact-name }}.tar.gz \
+            -C target/${{ matrix.target }}/release stackql-deploy
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path target/${{ matrix.target }}/release/stackql-deploy.exe `
+            -DestinationPath ${{ matrix.artifact-name }}.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-name }}.*
+          if-no-files-found: error

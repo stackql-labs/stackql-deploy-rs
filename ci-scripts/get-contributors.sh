@@ -1,1 +1,1 @@
-./stackql exec --infile get-contributors.iql --output csv -f contributors.csv -H
+./stackql exec --infile ci-scripts/get-contributors.iql --output csv -f contributors.csv -H
