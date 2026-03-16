@@ -49,7 +49,7 @@ jobs:
       - name: Run tests
         run: bash ci-scripts/test.sh
 
-  # Runs on: PR to main only — single-platform release build to catch compile errors pre-merge
+  # Runs on: PR to main only — fast compile check (no codegen) to catch errors pre-merge
   build-check:
     name: Build Check
     if: github.event_name == 'pull_request'
@@ -61,8 +61,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Create placeholder contributors file
         run: touch contributors.csv
-      - name: Build release
-        run: bash ci-scripts/build.sh
+      - name: Check compilation
+        run: cargo check --release
 
   # Runs on: push to main — fetch contributors for build-time injection
   prepare:
