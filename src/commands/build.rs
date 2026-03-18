@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use clap::{Arg, ArgMatches, Command};
-use log::{debug, info};
+use log::{debug, info, warn};
 
 use crate::commands::base::CommandRunner;
 use crate::commands::common_args::{
@@ -182,85 +182,62 @@ fn run_build(
             (runner.get_queries(resource, &full_context), None)
         };
 
-        // Provisioning queries for resource/multi types
-        let mut create_query: Option<String> = None;
-        let mut create_retries = 1u32;
-        let mut create_retry_delay = 0u32;
-        let mut update_query: Option<String> = None;
-        let mut update_retries = 1u32;
-        let mut update_retry_delay = 0u32;
-        let mut has_createorupdate = false;
+        // Detect anchor presence and extract retry options (no rendering yet).
+        // All query rendering is deferred to the point of use (JIT) because
+        // exists may capture this.* fields needed by downstream queries.
+        let has_createorupdate = resource_queries.contains_key("createorupdate");
+        let create_retries;
+        let create_retry_delay;
+        let update_retries;
+        let update_retry_delay;
 
         if res_type == "resource" || res_type == "multi" {
-            if let Some(cou) = resource_queries.get("createorupdate") {
-                has_createorupdate = true;
-                let rendered = runner.render_query(
-                    &resource.name,
-                    "createorupdate",
-                    &cou.template,
-                    &full_context,
-                );
-                create_query = Some(rendered.clone());
+            if has_createorupdate {
+                let cou = resource_queries.get("createorupdate").unwrap();
                 create_retries = cou.options.retries;
                 create_retry_delay = cou.options.retry_delay;
-                update_query = Some(rendered);
                 update_retries = cou.options.retries;
                 update_retry_delay = cou.options.retry_delay;
             } else {
                 if let Some(cq) = resource_queries.get("create") {
-                    create_query = Some(runner.render_query(
-                        &resource.name,
-                        "create",
-                        &cq.template,
-                        &full_context,
-                    ));
                     create_retries = cq.options.retries;
                     create_retry_delay = cq.options.retry_delay;
+                } else {
+                    catch_error_and_exit(
+                        "iql file must include either 'create' or 'createorupdate' anchor.",
+                    );
                 }
                 if let Some(uq) = resource_queries.get("update") {
-                    update_query = Some(runner.render_query(
-                        &resource.name,
-                        "update",
-                        &uq.template,
-                        &full_context,
-                    ));
                     update_retries = uq.options.retries;
                     update_retry_delay = uq.options.retry_delay;
+                } else {
+                    update_retries = 1;
+                    update_retry_delay = 0;
                 }
             }
-
-            if create_query.is_none() {
-                catch_error_and_exit(
-                    "iql file must include either 'create' or 'createorupdate' anchor.",
-                );
-            }
+        } else {
+            create_retries = 1;
+            create_retry_delay = 0;
+            update_retries = 1;
+            update_retry_delay = 0;
         }
 
-        // Render the exists query eagerly (it never depends on this.* fields)
+        // Render exists eagerly (it never depends on this.* fields)
         let exists_query = resource_queries.get("exists").map(|q| {
             let rendered =
                 runner.render_query(&resource.name, "exists", &q.template, &full_context);
             (rendered, q.options.clone())
         });
 
-        // Statecheck and exports rendering is deferred until after the exists
-        // check runs, because the exists query may capture fields (e.g.
-        // `identifier`) that should be available as {{ this.<field> }} in
-        // subsequent queries.
         let mut full_context = full_context;
         let exports_opts = resource_queries.get("exports");
         let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
         let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
 
-        // Only eagerly render exports if there's no exists query; otherwise
-        // defer until after exists has captured this.* fields.
-        let mut exports_query_str: Option<String> = if resource_queries.contains_key("exists") {
-            None // will be rendered after exists check injects this.* fields
-        } else {
-            resource_queries
-                .get("exports")
-                .map(|q| runner.render_query(&resource.name, "exports", &q.template, &full_context))
-        };
+        // All other queries (create, update, statecheck, exports) are rendered
+        // JIT at the point of use, after exists has had a chance to capture
+        // this.* fields into full_context.
+        let mut exports_query_str: Option<String> = None;
 
         // Handle query type with no exports
         if res_type == "query" && exports_query_str.is_none() {
@@ -302,12 +279,12 @@ fn run_build(
             } else if resource_queries.contains_key("statecheck") {
                 // Flow 1: Traditional flow when statecheck exists
                 if let Some(ref eq) = exists_query {
-                    let eq_opts = resource_queries.get("exists").unwrap();
+                    // Pre-create: fast fail (1 attempt, no delay)
                     let (exists, fields) = runner.check_if_resource_exists(
                         resource,
                         &eq.0,
-                        eq_opts.options.retries,
-                        eq_opts.options.retry_delay,
+                        1,
+                        0,
                         dry_run,
                         show_queries,
                         false,
@@ -398,12 +375,12 @@ fn run_build(
                     exports_result_from_proxy = None;
 
                     if let Some(ref eq) = exists_query {
-                        let eq_opts = resource_queries.get("exists").unwrap();
+                        // Pre-create: fast fail (1 attempt, no delay)
                         let (exists, fields) = runner.check_if_resource_exists(
                             resource,
                             &eq.0,
-                            eq_opts.options.retries,
-                            eq_opts.options.retry_delay,
+                            1,
+                            0,
                             dry_run,
                             show_queries,
                             false,
@@ -424,12 +401,12 @@ fn run_build(
                 }
             } else if let Some(ref eq) = exists_query {
                 // Flow 3: exists query only (no statecheck rendered yet)
-                let eq_opts = resource_queries.get("exists").unwrap();
+                // Pre-create: fast fail (1 attempt, no delay)
                 let (exists, fields) = runner.check_if_resource_exists(
                     resource,
                     &eq.0,
-                    eq_opts.options.retries,
-                    eq_opts.options.retry_delay,
+                    1,
+                    0,
                     dry_run,
                     show_queries,
                     false,
@@ -479,9 +456,23 @@ fn run_build(
             let mut is_created_or_updated = false;
 
             if !resource_exists {
+                // JIT render create/createorupdate query
+                let create_query = if has_createorupdate {
+                    let cou = resource_queries.get("createorupdate").unwrap();
+                    runner.render_query(
+                        &resource.name,
+                        "createorupdate",
+                        &cou.template,
+                        &full_context,
+                    )
+                } else {
+                    let cq = resource_queries.get("create").unwrap();
+                    runner.render_query(&resource.name, "create", &cq.template, &full_context)
+                };
+
                 let (created, returning_row) = runner.create_resource(
                     resource,
-                    create_query.as_ref().unwrap(),
+                    &create_query,
                     create_retries,
                     create_retry_delay,
                     dry_run,
@@ -529,11 +520,11 @@ fn run_build(
                             render_exports!(runner, resource_queries, resource, &full_context);
                     }
                 } else if !resource.get_return_val_mappings("create").is_empty() {
-                    catch_error_and_exit(&format!(
+                    warn!(
                         "return_vals specified for [{}] create but no RETURNING data received. \
-                         Ensure the create query includes 'RETURNING *'.",
+                         Will fall back to post-create exists query.",
                         resource.name
-                    ));
+                    );
                 }
 
                 // Run callback:create block if present.
@@ -573,6 +564,21 @@ fn run_build(
             }
 
             if resource_exists && !is_correct_state {
+                // JIT render update/createorupdate query
+                let update_query: Option<String> = if has_createorupdate {
+                    let cou = resource_queries.get("createorupdate").unwrap();
+                    Some(runner.render_query(
+                        &resource.name,
+                        "createorupdate",
+                        &cou.template,
+                        &full_context,
+                    ))
+                } else {
+                    resource_queries.get("update").map(|uq| {
+                        runner.render_query(&resource.name, "update", &uq.template, &full_context)
+                    })
+                };
+
                 let (updated, returning_row) = runner.update_resource(
                     resource,
                     update_query.as_deref(),
@@ -627,11 +633,11 @@ fn run_build(
                 } else if !resource.get_return_val_mappings("update").is_empty()
                     && is_created_or_updated
                 {
-                    catch_error_and_exit(&format!(
+                    warn!(
                         "return_vals specified for [{}] update but no RETURNING data received. \
-                         Ensure the update query includes 'RETURNING *'.",
+                         Will fall back to post-update exists query.",
                         resource.name
-                    ));
+                    );
                 }
 
                 // Run callback:update block if present.
@@ -686,8 +692,8 @@ fn run_build(
                         let (post_exists, fields) = runner.check_if_resource_exists(
                             resource,
                             &eq.0,
-                            eq_opts.options.retries.max(3),
-                            eq_opts.options.retry_delay.max(5),
+                            eq_opts.options.retries,
+                            eq_opts.options.retry_delay,
                             dry_run,
                             show_queries,
                             false,

@@ -1,4 +1,4 @@
-/*+ exists */
+/*+ exists, retries=10, retry_delay=5 */
 SELECT
   id as subnet_route_table_assn_id
 FROM awscc.ec2.vw_subnet_route_table_associations
