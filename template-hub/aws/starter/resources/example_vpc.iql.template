@@ -1,67 +1,56 @@
-/* defines the provisioning and deprovisioning commands 
-used to create, update or delete the resource
-replace queries with your queries */
-
 /*+ exists */
-SELECT COUNT(*) as count FROM
+WITH tagged_resources AS
 (
-SELECT vpc_id,
-json_group_object(tag_key, tag_value) as tags
-FROM aws.ec2.vpc_tags
-WHERE region = '{% raw %}{{ region }}{% endraw %}'
-AND cidr_block = '{% raw %}{{ vpc_cidr_block }}{% endraw %}'
-GROUP BY vpc_id
-HAVING json_extract(tags, '$.Provisioner') = 'stackql'
-AND json_extract(tags, '$.StackName') = '{% raw %}{{ stack_name }}{% endraw %}'
-AND json_extract(tags, '$.StackEnv') = '{% raw %}{{ stack_env }}{% endraw %}'
-) t; 
-
-/*+ create */
-INSERT INTO aws.ec2.vpcs (
- CidrBlock,
- Tags,
- EnableDnsSupport,
- EnableDnsHostnames, 
- region
+    SELECT split_part(ResourceARN, '/', 2) as vpc_id
+    FROM awscc.tagging.tagged_resources
+    WHERE region = '{% raw %}{{ region }}{% endraw %}'
+    AND TagFilters = '{% raw %}{{ global_tags | to_aws_tag_filters }}{% endraw %}'
+    AND ResourceTypeFilters = '["ec2:vpc"]'
+),
+vpcs AS
+(
+    SELECT vpc_id
+    FROM awscc.ec2.vpcs_list_only
+    WHERE region = '{% raw %}{{ region }}{% endraw %}'
 )
-SELECT 
- '{% raw %}{{ vpc_cidr_block }}{% endraw %}',
- '{% raw %}{{ vpc_tags }}{% endraw %}',
- true,
- true,
- '{% raw %}{{ region }}{% endraw %}';
+SELECT r.vpc_id
+FROM vpcs r
+INNER JOIN tagged_resources tr
+ON r.vpc_id = tr.vpc_id;
 
 /*+ statecheck, retries=5, retry_delay=5 */
 SELECT COUNT(*) as count FROM
 (
-SELECT vpc_id,
-cidr_block,
-json_group_object(tag_key, tag_value) as tags
-FROM aws.ec2.vpc_tags
-WHERE region = '{% raw %}{{ region }}{% endraw %}'
+SELECT
+AWS_POLICY_EQUAL(tags, '{% raw %}{{ vpc_tags }}{% endraw %}') as test_tags
+FROM awscc.ec2.vpcs
+WHERE Identifier = '{% raw %}{{ this.vpc_id }}{% endraw %}'
+AND region = '{% raw %}{{ region }}{% endraw %}'
 AND cidr_block = '{% raw %}{{ vpc_cidr_block }}{% endraw %}'
-GROUP BY vpc_id
-HAVING json_extract(tags, '$.Provisioner') = 'stackql'
-AND json_extract(tags, '$.StackName') = '{% raw %}{{ stack_name }}{% endraw %}'
-AND json_extract(tags, '$.StackEnv') = '{% raw %}{{ stack_env }}{% endraw %}'
 ) t
-WHERE cidr_block = '{% raw %}{{ vpc_cidr_block }}{% endraw %}'; 
+WHERE test_tags = 1;
 
-/*+ exports, retries=5, retry_delay=5 */
-SELECT vpc_id, vpc_cidr_block FROM
-(
-SELECT vpc_id, cidr_block as "vpc_cidr_block",
-json_group_object(tag_key, tag_value) as tags
-FROM aws.ec2.vpc_tags
-WHERE region = '{% raw %}{{ region }}{% endraw %}'
-AND cidr_block = '{% raw %}{{ vpc_cidr_block }}{% endraw %}'
-GROUP BY vpc_id
-HAVING json_extract(tags, '$.Provisioner') = 'stackql'
-AND json_extract(tags, '$.StackName') = '{% raw %}{{ stack_name }}{% endraw %}'
-AND json_extract(tags, '$.StackEnv') = '{% raw %}{{ stack_env }}{% endraw %}'
-) t;
+/*+ create */
+INSERT INTO awscc.ec2.vpcs (
+ CidrBlock,
+ Tags,
+ EnableDnsSupport,
+ EnableDnsHostnames,
+ region
+)
+SELECT
+ '{% raw %}{{ vpc_cidr_block }}{% endraw %}',
+ '{% raw %}{{ vpc_tags }}{% endraw %}',
+ true,
+ true,
+ '{% raw %}{{ region }}{% endraw %}'
+RETURNING *;
+
+/*+ exports */
+SELECT '{% raw %}{{ this.vpc_id }}{% endraw %}' as vpc_id,
+'{% raw %}{{ vpc_cidr_block }}{% endraw %}' as vpc_cidr_block;
 
 /*+ delete */
-DELETE FROM aws.ec2.vpcs
+DELETE FROM awscc.ec2.vpcs
 WHERE Identifier = '{% raw %}{{ vpc_id }}{% endraw %}'
 AND region = '{% raw %}{{ region }}{% endraw %}';

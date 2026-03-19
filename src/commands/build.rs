@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use clap::{Arg, ArgMatches, Command};
-use log::info;
+use log::{debug, info, warn};
 
 use crate::commands::base::CommandRunner;
 use crate::commands::common_args::{
@@ -21,7 +21,7 @@ use crate::core::config::get_resource_type;
 use crate::core::utils::catch_error_and_exit;
 use crate::utils::connection::create_client;
 use crate::utils::display::{print_unicode_box, BorderColor};
-use crate::utils::server::check_and_start_server;
+use crate::utils::server::{check_and_start_server, stop_local_server};
 
 /// Defines the `build` command for the CLI application.
 pub fn command() -> Command {
@@ -90,10 +90,40 @@ pub fn execute(matches: &ArgMatches) {
     );
 
     if is_dry_run {
-        println!("dry-run build complete");
+        print_unicode_box("dry-run build complete", BorderColor::Green);
     } else {
-        println!("build complete");
+        print_unicode_box("build complete", BorderColor::Green);
     }
+
+    stop_local_server();
+}
+
+/// Render the statecheck query template with the given context.
+macro_rules! render_statecheck {
+    ($runner:expr, $resource_queries:expr, $resource:expr, $ctx:expr) => {
+        $resource_queries.get("statecheck").map(|q| {
+            let rendered = $runner.render_query(&$resource.name, "statecheck", &q.template, $ctx);
+            (rendered, q.options.clone())
+        })
+    };
+}
+
+/// Render the exports query template with the given context.
+macro_rules! render_exports {
+    ($runner:expr, $resource_queries:expr, $resource:expr, $ctx:expr) => {
+        $resource_queries.get("exports").and_then(|q| {
+            match $runner.try_render_query(&$resource.name, "exports", &q.template, $ctx) {
+                Some(rendered) => Some(rendered),
+                None => {
+                    debug!(
+                        "exports query for [{}] deferred (unresolved variables)",
+                        $resource.name
+                    );
+                    None
+                }
+            }
+        })
+    };
 }
 
 /// Main build workflow matching Python's StackQLProvisioner.run().
@@ -152,86 +182,76 @@ fn run_build(
             (runner.get_queries(resource, &full_context), None)
         };
 
-        // Provisioning queries for resource/multi types
-        let mut create_query: Option<String> = None;
-        let mut create_retries = 1u32;
-        let mut create_retry_delay = 0u32;
-        let mut update_query: Option<String> = None;
-        let mut update_retries = 1u32;
-        let mut update_retry_delay = 0u32;
-        let mut has_createorupdate = false;
+        // Detect anchor presence and extract retry options (no rendering yet).
+        // All query rendering is deferred to the point of use (JIT) because
+        // exists may capture this.* fields needed by downstream queries.
+        let has_createorupdate = resource_queries.contains_key("createorupdate");
+        let create_retries;
+        let create_retry_delay;
+        let update_retries;
+        let update_retry_delay;
 
         if res_type == "resource" || res_type == "multi" {
-            if let Some(cou) = resource_queries.get("createorupdate") {
-                has_createorupdate = true;
-                let rendered = runner.render_query(
-                    &resource.name,
-                    "createorupdate",
-                    &cou.template,
-                    &full_context,
-                );
-                create_query = Some(rendered.clone());
+            if has_createorupdate {
+                let cou = resource_queries.get("createorupdate").unwrap();
                 create_retries = cou.options.retries;
                 create_retry_delay = cou.options.retry_delay;
-                update_query = Some(rendered);
                 update_retries = cou.options.retries;
                 update_retry_delay = cou.options.retry_delay;
             } else {
                 if let Some(cq) = resource_queries.get("create") {
-                    create_query = Some(runner.render_query(
-                        &resource.name,
-                        "create",
-                        &cq.template,
-                        &full_context,
-                    ));
                     create_retries = cq.options.retries;
                     create_retry_delay = cq.options.retry_delay;
+                } else {
+                    catch_error_and_exit(
+                        "iql file must include either 'create' or 'createorupdate' anchor.",
+                    );
                 }
                 if let Some(uq) = resource_queries.get("update") {
-                    update_query = Some(runner.render_query(
-                        &resource.name,
-                        "update",
-                        &uq.template,
-                        &full_context,
-                    ));
                     update_retries = uq.options.retries;
                     update_retry_delay = uq.options.retry_delay;
+                } else {
+                    update_retries = 1;
+                    update_retry_delay = 0;
                 }
             }
-
-            if create_query.is_none() {
-                catch_error_and_exit(
-                    "iql file must include either 'create' or 'createorupdate' anchor.",
-                );
-            }
+        } else {
+            create_retries = 1;
+            create_retry_delay = 0;
+            update_retries = 1;
+            update_retry_delay = 0;
         }
 
-        // Test queries - render only the ones we need
+        // Render exists eagerly (it never depends on this.* fields)
         let exists_query = resource_queries.get("exists").map(|q| {
             let rendered =
                 runner.render_query(&resource.name, "exists", &q.template, &full_context);
             (rendered, q.options.clone())
         });
-        let statecheck_query = resource_queries.get("statecheck").map(|q| {
-            let rendered =
-                runner.render_query(&resource.name, "statecheck", &q.template, &full_context);
-            (rendered, q.options.clone())
-        });
-        let mut exports_query_str: Option<String> = resource_queries
-            .get("exports")
-            .map(|q| runner.render_query(&resource.name, "exports", &q.template, &full_context));
+
+        let mut full_context = full_context;
         let exports_opts = resource_queries.get("exports");
         let exports_retries = exports_opts.map_or(1, |q| q.options.retries);
         let exports_retry_delay = exports_opts.map_or(0, |q| q.options.retry_delay);
 
-        // Handle query type with no exports
-        if res_type == "query" && exports_query_str.is_none() {
+        // All other queries (create, update, statecheck, exports) are rendered
+        // JIT at the point of use, after exists has had a chance to capture
+        // this.* fields into full_context.
+        let mut exports_query_str: Option<String> = None;
+
+        // Handle query type: render exports eagerly (query types don't
+        // have exists/statecheck so there's no this.* deferral needed).
+        if res_type == "query" {
             if let Some(ref iq) = inline_query {
                 exports_query_str = Some(iq.clone());
             } else {
-                catch_error_and_exit(
-                    "Inline sql must be supplied or an iql file must be present with an 'exports' anchor for query type resources.",
-                );
+                exports_query_str =
+                    render_exports!(runner, resource_queries, resource, &full_context);
+                if exports_query_str.is_none() {
+                    catch_error_and_exit(
+                        "Inline sql must be supplied or an iql file must be present with an 'exports' anchor for query type resources.",
+                    );
+                }
             }
         }
 
@@ -242,24 +262,49 @@ fn run_build(
             let mut resource_exists = false;
             let mut is_correct_state = false;
 
+            /// Inject fields captured by the exists query into the context as
+            /// `this.<field>` variables (scoped to the resource name), so that
+            /// statecheck / exports / delete templates can reference the
+            /// discovered identifiers.
+            fn apply_exists_fields(
+                fields: Option<HashMap<String, String>>,
+                resource_name: &str,
+                full_context: &mut HashMap<String, String>,
+            ) {
+                if let Some(ref f) = fields {
+                    for (k, v) in f {
+                        full_context.insert(format!("{}.{}", resource_name, k), v.clone());
+                    }
+                }
+            }
+
             // State checking logic
             if has_createorupdate {
                 // Skip all existence and state checks for createorupdate
-            } else if statecheck_query.is_some() {
+            } else if resource_queries.contains_key("statecheck") {
                 // Flow 1: Traditional flow when statecheck exists
                 if let Some(ref eq) = exists_query {
-                    let eq_opts = resource_queries.get("exists").unwrap();
-                    resource_exists = runner.check_if_resource_exists(
+                    // Pre-create: fast fail (1 attempt, no delay)
+                    let (exists, fields) = runner.check_if_resource_exists(
                         resource,
                         &eq.0,
-                        eq_opts.options.retries,
-                        eq_opts.options.retry_delay,
+                        1,
+                        0,
                         dry_run,
                         show_queries,
                         false,
                     );
+                    resource_exists = exists;
+
+                    // If the exists query captured fields, inject them and
+                    // re-render downstream queries.
+                    if fields.is_some() {
+                        apply_exists_fields(fields, &resource.name, &mut full_context);
+                    }
                 } else {
-                    // Use statecheck as exists check
+                    // Use statecheck as exists check (render with current ctx)
+                    let statecheck_query =
+                        render_statecheck!(runner, resource_queries, resource, &full_context);
                     let sq = statecheck_query.as_ref().unwrap();
                     let sq_opts = resource_queries.get("statecheck").unwrap();
                     is_correct_state = runner.check_if_resource_is_correct_state(
@@ -282,6 +327,9 @@ fn run_build(
                         );
                         is_correct_state = true;
                     } else {
+                        // Re-render statecheck with (possibly enriched) context
+                        let statecheck_query =
+                            render_statecheck!(runner, resource_queries, resource, &full_context);
                         let sq = statecheck_query.as_ref().unwrap();
                         let sq_opts = resource_queries.get("statecheck").unwrap();
                         is_correct_state = runner.check_if_resource_is_correct_state(
@@ -294,7 +342,14 @@ fn run_build(
                         );
                     }
                 }
-            } else if let Some(ref eq_str) = exports_query_str {
+
+                // Re-render exports with enriched context (only if exists
+                // captured fields; otherwise defer until post-create).
+                if resource_exists {
+                    exports_query_str =
+                        render_exports!(runner, resource_queries, resource, &full_context);
+                }
+            } else if exports_query_str.is_some() {
                 // Flow 2: Optimized flow using exports as proxy
                 info!(
                     "trying exports query first (fast-fail) for optimal validation for [{}]",
@@ -302,7 +357,7 @@ fn run_build(
                 );
                 let (state, proxy_result) = runner.check_state_using_exports_proxy(
                     resource,
-                    eq_str,
+                    exports_query_str.as_ref().unwrap(),
                     1,
                     0,
                     dry_run,
@@ -325,32 +380,77 @@ fn run_build(
                     exports_result_from_proxy = None;
 
                     if let Some(ref eq) = exists_query {
-                        let eq_opts = resource_queries.get("exists").unwrap();
-                        resource_exists = runner.check_if_resource_exists(
+                        // Pre-create: fast fail (1 attempt, no delay)
+                        let (exists, fields) = runner.check_if_resource_exists(
                             resource,
                             &eq.0,
-                            eq_opts.options.retries,
-                            eq_opts.options.retry_delay,
+                            1,
+                            0,
                             dry_run,
                             show_queries,
                             false,
                         );
+                        resource_exists = exists;
+
+                        if fields.is_some() {
+                            apply_exists_fields(fields, &resource.name, &mut full_context);
+                        }
+                        // Always try to render exports after fallback exists
+                        // (needed for count-based exists where exports doesn't
+                        // depend on this.* fields).
+                        exports_query_str =
+                            render_exports!(runner, resource_queries, resource, &full_context);
                     } else {
                         resource_exists = false;
                     }
                 }
             } else if let Some(ref eq) = exists_query {
-                // Flow 3: Basic flow with only exists query
-                let eq_opts = resource_queries.get("exists").unwrap();
-                resource_exists = runner.check_if_resource_exists(
+                // Flow 3: exists query only (no statecheck rendered yet)
+                // Pre-create: fast fail (1 attempt, no delay)
+                let (exists, fields) = runner.check_if_resource_exists(
                     resource,
                     &eq.0,
-                    eq_opts.options.retries,
-                    eq_opts.options.retry_delay,
+                    1,
+                    0,
                     dry_run,
                     show_queries,
                     false,
                 );
+                resource_exists = exists;
+                let has_fields = fields.is_some();
+
+                if has_fields {
+                    apply_exists_fields(fields, &resource.name, &mut full_context);
+                }
+                // Always try to render exports after exists
+                exports_query_str =
+                    render_exports!(runner, resource_queries, resource, &full_context);
+
+                // Determine correctness based on what's available:
+                if exists {
+                    if let Some(ref eq_str) = exports_query_str {
+                        // Use exports as statecheck proxy
+                        info!(
+                            "using exports query as statecheck proxy for [{}]",
+                            resource.name
+                        );
+                        let (state, proxy) = runner.check_state_using_exports_proxy(
+                            resource,
+                            eq_str,
+                            exports_retries,
+                            exports_retry_delay,
+                            dry_run,
+                            show_queries,
+                        );
+                        is_correct_state = state;
+                        if proxy.is_some() {
+                            exports_result_from_proxy = proxy;
+                        }
+                    } else {
+                        // No statecheck and no exports: exists IS the statecheck
+                        is_correct_state = true;
+                    }
+                }
             } else {
                 catch_error_and_exit(
                     "iql file must include either 'exists', 'statecheck', or 'exports' anchor.",
@@ -361,9 +461,23 @@ fn run_build(
             let mut is_created_or_updated = false;
 
             if !resource_exists {
+                // JIT render create/createorupdate query
+                let create_query = if has_createorupdate {
+                    let cou = resource_queries.get("createorupdate").unwrap();
+                    runner.render_query(
+                        &resource.name,
+                        "createorupdate",
+                        &cou.template,
+                        &full_context,
+                    )
+                } else {
+                    let cq = resource_queries.get("create").unwrap();
+                    runner.render_query(&resource.name, "create", &cq.template, &full_context)
+                };
+
                 let (created, returning_row) = runner.create_resource(
                     resource,
-                    create_query.as_ref().unwrap(),
+                    &create_query,
                     create_retries,
                     create_retry_delay,
                     dry_run,
@@ -374,7 +488,48 @@ fn run_build(
 
                 // Capture RETURNING * result.
                 if let Some(ref row) = returning_row {
+                    debug!("RETURNING payload for [{}]: {:?}", resource.name, row);
                     runner.store_callback_data(&resource.name, row);
+
+                    // Apply return_vals mappings from manifest.
+                    let mappings = resource.get_return_val_mappings("create");
+                    if !mappings.is_empty() {
+                        let mut fields = HashMap::new();
+                        for (src, tgt) in &mappings {
+                            if let Some(val) = row.get(src.as_str()) {
+                                if !val.is_empty() && val != "null" {
+                                    info!(
+                                        "RETURNING [{}] for [{}] captured as [this.{}] = [{}]",
+                                        src, resource.name, tgt, val
+                                    );
+                                    fields.insert(tgt.clone(), val.clone());
+                                } else {
+                                    catch_error_and_exit(&format!(
+                                        "return_vals for [{}]: field [{}] in RETURNING result \
+                                         is null or empty.",
+                                        resource.name, src
+                                    ));
+                                }
+                            } else {
+                                catch_error_and_exit(&format!(
+                                    "return_vals for [{}]: expected field [{}] not found in \
+                                     RETURNING result. Ensure the create query includes \
+                                     'RETURNING *' or 'RETURNING {}'.",
+                                    resource.name, src, src
+                                ));
+                            }
+                        }
+                        apply_exists_fields(Some(fields), &resource.name, &mut full_context);
+                        // Re-render exports/statecheck with the captured values
+                        exports_query_str =
+                            render_exports!(runner, resource_queries, resource, &full_context);
+                    }
+                } else if !resource.get_return_val_mappings("create").is_empty() {
+                    warn!(
+                        "return_vals specified for [{}] create but no RETURNING data received. \
+                         Will fall back to post-create exists query.",
+                        resource.name
+                    );
                 }
 
                 // Run callback:create block if present.
@@ -414,6 +569,21 @@ fn run_build(
             }
 
             if resource_exists && !is_correct_state {
+                // JIT render update/createorupdate query
+                let update_query: Option<String> = if has_createorupdate {
+                    let cou = resource_queries.get("createorupdate").unwrap();
+                    Some(runner.render_query(
+                        &resource.name,
+                        "createorupdate",
+                        &cou.template,
+                        &full_context,
+                    ))
+                } else {
+                    resource_queries.get("update").map(|uq| {
+                        runner.render_query(&resource.name, "update", &uq.template, &full_context)
+                    })
+                };
+
                 let (updated, returning_row) = runner.update_resource(
                     resource,
                     update_query.as_deref(),
@@ -427,7 +597,52 @@ fn run_build(
 
                 // Capture RETURNING * result.
                 if let Some(ref row) = returning_row {
+                    debug!(
+                        "RETURNING payload for [{}] (update): {:?}",
+                        resource.name, row
+                    );
                     runner.store_callback_data(&resource.name, row);
+
+                    // Apply return_vals mappings from manifest.
+                    let mappings = resource.get_return_val_mappings("update");
+                    if !mappings.is_empty() {
+                        let mut fields = HashMap::new();
+                        for (src, tgt) in &mappings {
+                            if let Some(val) = row.get(src.as_str()) {
+                                if !val.is_empty() && val != "null" {
+                                    info!(
+                                        "RETURNING [{}] for [{}] captured as [this.{}] = [{}]",
+                                        src, resource.name, tgt, val
+                                    );
+                                    fields.insert(tgt.clone(), val.clone());
+                                } else {
+                                    catch_error_and_exit(&format!(
+                                        "return_vals for [{}]: field [{}] in RETURNING result \
+                                         is null or empty.",
+                                        resource.name, src
+                                    ));
+                                }
+                            } else {
+                                catch_error_and_exit(&format!(
+                                    "return_vals for [{}]: expected field [{}] not found in \
+                                     RETURNING result. Ensure the update query includes \
+                                     'RETURNING *' or 'RETURNING {}'.",
+                                    resource.name, src, src
+                                ));
+                            }
+                        }
+                        apply_exists_fields(Some(fields), &resource.name, &mut full_context);
+                        exports_query_str =
+                            render_exports!(runner, resource_queries, resource, &full_context);
+                    }
+                } else if !resource.get_return_val_mappings("update").is_empty()
+                    && is_created_or_updated
+                {
+                    warn!(
+                        "return_vals specified for [{}] update but no RETURNING data received. \
+                         Will fall back to post-update exists query.",
+                        resource.name
+                    );
                 }
 
                 // Run callback:update block if present.
@@ -467,7 +682,57 @@ fn run_build(
 
             // Post-deploy state check
             if is_created_or_updated {
-                if let Some(ref sq) = statecheck_query {
+                // Check if return_vals already captured fields from RETURNING.
+                // If so, skip the post-create exists re-run to save API calls.
+                let op = if !resource_exists { "create" } else { "update" };
+                let has_return_vals = !resource.get_return_val_mappings(op).is_empty();
+
+                // After create/update, re-run the exists query to capture
+                // this.* fields (e.g. identifier) that are needed by the
+                // statecheck and exports queries — but skip this if
+                // return_vals already provided them.
+                if !has_return_vals {
+                    if let Some(ref eq) = exists_query {
+                        let eq_opts = resource_queries.get("exists").unwrap();
+                        let (post_exists, fields) = runner.check_if_resource_exists(
+                            resource,
+                            &eq.0,
+                            eq_opts.options.retries,
+                            eq_opts.options.retry_delay,
+                            dry_run,
+                            show_queries,
+                            false,
+                        );
+                        apply_exists_fields(fields, &resource.name, &mut full_context);
+
+                        // Always try to render exports after post-create exists
+                        exports_query_str =
+                            render_exports!(runner, resource_queries, resource, &full_context);
+
+                        // If exists confirms the resource is present and there is
+                        // no statecheck or exports query, the exists query IS
+                        // the statecheck: a successful re-run confirms the
+                        // resource was created/updated successfully.
+                        if post_exists
+                            && !resource_queries.contains_key("statecheck")
+                            && exports_query_str.is_none()
+                        {
+                            is_correct_state = true;
+                        }
+                    }
+                }
+
+                debug!(
+                    "post-deploy for [{}]: is_correct_state={}, has_statecheck={}, exports_query_str={}",
+                    resource.name,
+                    is_correct_state,
+                    resource_queries.contains_key("statecheck"),
+                    if exports_query_str.is_some() { "Some" } else { "None" }
+                );
+
+                if let Some(sq) =
+                    render_statecheck!(runner, resource_queries, resource, &full_context)
+                {
                     let sq_opts = resource_queries.get("statecheck").unwrap();
                     is_correct_state = runner.check_if_resource_is_correct_state(
                         resource,

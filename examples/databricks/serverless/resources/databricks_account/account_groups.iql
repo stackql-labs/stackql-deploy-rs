@@ -1,83 +1,26 @@
 /*+ exists */
-SELECT count(*) as count
+SELECT id AS databricks_group_id
 FROM databricks_account.iam.account_groups
-WHERE account_id = '{{ account_id }}'
-AND filter = 'displayName Eq "{{ displayName }}"'
-;
+WHERE account_id = '{{ databricks_account_id }}'
+AND filter = 'displayName Eq "{{ display_name }}"';
 
 /*+ create */
 INSERT INTO databricks_account.iam.account_groups (
-display_name,
-external_id,
-id,
-members,
-meta,
-roles,
+displayName,
 account_id
 )
 SELECT 
 '{{ display_name }}',
-'{{ external_id }}',
-'{{ id }}',
-'{{ members }}',
-'{{ meta }}',
-'{{ roles }}',
-'{{ account_id }}'
+'{{ databricks_account_id }}'
 RETURNING
-id,
-account_id,
-displayName,
-externalId,
-members,
-meta,
-roles
-;
-
-/*+ update */
-UPDATE databricks_account.iam.account_groups
-SET 
-operations = '{{ operations }}',
-schemas = '{{ schemas }}'
-WHERE 
-account_id = '{{ account_id }}' --required
-AND id = '{{ id }}' --required;
-
-/*+ statecheck, retries=5, retry_delay=10 */
-SELECT count(*) as count
-FROM databricks_account.iam.account_groups
-WHERE 
-id = '{{ id }}' AND
-members = '{{ members }}' AND
-meta = '{{ meta }}' AND
-roles = '{{ roles }}' AND
-account_id = '{{ account_id }}' -- required
-AND attributes = '{{ attributes }}'
-AND count = '{{ count }}'
-AND excluded_attributes = '{{ excluded_attributes }}'
-AND filter = '{{ filter }}'
-AND sort_by = '{{ sort_by }}'
-AND sort_order = '{{ sort_order }}'
-AND start_index = '{{ start_index }}'
+id
 ;
 
 /*+ exports */
-SELECT id,
-members,
-meta,
-roles
-FROM databricks_account.iam.account_groups
-WHERE account_id = '{{ account_id }}' -- required
-AND attributes = '{{ attributes }}'
-AND count = '{{ count }}'
-AND excluded_attributes = '{{ excluded_attributes }}'
-AND filter = '{{ filter }}'
-AND sort_by = '{{ sort_by }}'
-AND sort_order = '{{ sort_order }}'
-AND start_index = '{{ start_index }}'
-;
+SELECT '{{ this.databricks_group_id }}' as databricks_group_id,
+'{{ display_name }}' as display_name;
 
 /*+ delete */
 DELETE FROM databricks_account.iam.account_groups
-WHERE account_id = '{{ account_id }}' --required
-AND id = '{{ id }}' --required
-;
+WHERE account_id = '{{ databricks_account_id }}'
+AND id = '{{ databricks_group_id }}';

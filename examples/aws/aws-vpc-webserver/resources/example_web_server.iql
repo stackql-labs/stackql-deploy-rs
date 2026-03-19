@@ -1,0 +1,64 @@
+/*+ exists */
+WITH tagged_resources AS
+(
+    SELECT split_part(ResourceARN, '/', 2) as instance_id
+    FROM awscc.tagging.tagged_resources
+    WHERE region = '{{ region }}'
+    AND TagFilters = '{{ global_tags | to_aws_tag_filters }}'
+    AND ResourceTypeFilters = '["ec2:instance"]'
+),
+instances AS
+(
+    SELECT instance_id
+    FROM awscc.ec2.instances_list_only
+    WHERE region = '{{ region }}'
+)
+SELECT r.instance_id
+FROM instances r
+INNER JOIN tagged_resources tr
+ON r.instance_id = tr.instance_id;
+
+/*+ statecheck, retries=10, retry_delay=10 */
+SELECT COUNT(*) as count FROM
+(
+SELECT 
+AWS_POLICY_EQUAL(security_group_ids, '{{ sg_ids }}') as test_security_group_ids,
+AWS_POLICY_EQUAL(tags, '{{ instance_tags }}') as test_instance_tags
+FROM awscc.ec2.instances
+WHERE Identifier = '{{ this.instance_id }}'
+AND region = '{{ region }}'
+AND instance_type = '{{ instance_type }}'
+AND subnet_id = '{{ instance_subnet_id }}'
+AND image_id = '{{ ami_id }}'
+AND user_data = '{{ user_data | base64_encode }}'
+) t
+WHERE test_security_group_ids = 1
+AND test_instance_tags = 1;
+
+/*+ create */
+INSERT INTO awscc.ec2.instances (
+ ImageId,
+ InstanceType,
+ SubnetId,
+ SecurityGroupIds,
+ UserData,
+ Tags,
+ region
+)
+SELECT
+ '{{ ami_id }}',
+ '{{ instance_type }}',
+ '{{ instance_subnet_id }}',
+ '{{ sg_ids }}',
+ '{{ user_data | base64_encode }}',
+ '{{ instance_tags }}',
+ '{{ region }}'
+RETURNING *;
+
+/*+ exports */
+SELECT '{{ this.instance_id }}' as instance_id;
+
+/*+ delete */
+DELETE FROM awscc.ec2.instances
+WHERE Identifier = '{{ instance_id }}'
+AND region = '{{ region }}';

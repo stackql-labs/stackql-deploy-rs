@@ -11,7 +11,7 @@ use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 
 use crate::utils::pgwire::PgwireLite;
 use crate::utils::query::{execute_query, QueryResult};
@@ -19,7 +19,12 @@ use crate::utils::query::{execute_query, QueryResult};
 /// Exit with error message. Matches Python's `catch_error_and_exit`.
 pub fn catch_error_and_exit(msg: &str) -> ! {
     error!("{}", msg);
-    eprintln!("stackql-deploy operation failed");
+    // Stop the local server before exiting to avoid stale sessions
+    crate::utils::server::stop_local_server();
+    crate::utils::display::print_unicode_box(
+        "stackql-deploy operation failed",
+        crate::utils::display::BorderColor::Red,
+    );
     process::exit(1);
 }
 
@@ -37,12 +42,6 @@ pub fn run_stackql_query(
     let mut last_error: Option<String> = None;
 
     while attempt <= retries {
-        debug!(
-            "Executing stackql query on attempt {}:\n\n{}\n",
-            attempt + 1,
-            query
-        );
-
         match execute_query(query, client) {
             Ok(result) => match result {
                 QueryResult::Data {
@@ -64,7 +63,7 @@ pub fn run_stackql_query(
                     }
 
                     if rows.is_empty() {
-                        debug!("Stackql query executed successfully, retrieved 0 items.");
+                        debug!("Query returned no results");
                         if attempt < retries {
                             thread::sleep(Duration::from_secs(delay as u64));
                             attempt += 1;
@@ -113,7 +112,12 @@ pub fn run_stackql_query(
 
                         // Check for count query
                         if let Some(count_str) = result_maps[0].get("count") {
-                            debug!("Stackql query executed successfully, count: {}", count_str);
+                            if let Ok(json) = serde_json::to_string_pretty(&result_maps) {
+                                debug!(
+                                    "Stackql query executed successfully, count: {}\n\nresults:\n\n{}\n",
+                                    count_str, json
+                                );
+                            }
                             if let Ok(count) = count_str.parse::<i64>() {
                                 if count > 1 {
                                     catch_error_and_exit(&format!(
@@ -126,10 +130,12 @@ pub fn run_stackql_query(
                         }
                     }
 
-                    debug!(
-                        "Stackql query executed successfully, retrieved {} items.",
-                        result_maps.len()
-                    );
+                    if let Ok(json) = serde_json::to_string_pretty(&result_maps) {
+                        debug!(
+                            "Stackql query executed successfully, retrieved {} items.\n\nresults:\n\n{}\n",
+                            result_maps.len(), json
+                        );
+                    }
                     return result_maps;
                 }
                 QueryResult::Command(msg) => {
@@ -137,7 +143,7 @@ pub fn run_stackql_query(
                     return Vec::new();
                 }
                 QueryResult::Empty => {
-                    debug!("Empty result from query");
+                    debug!("Query returned no results");
                     if attempt < retries {
                         thread::sleep(Duration::from_secs(delay as u64));
                         attempt += 1;
@@ -148,15 +154,12 @@ pub fn run_stackql_query(
             },
             Err(e) => {
                 last_error = Some(e.clone());
-                if attempt == retries {
-                    if !suppress_errors {
-                        catch_error_and_exit(&format!(
-                            "Exception during stackql query execution:\n\n{}\n",
-                            e
-                        ));
-                    }
-                } else {
-                    error!("Exception on attempt {}:\n\n{}\n", attempt + 1, e);
+                debug!("Query error on attempt {}: {}", attempt + 1, e);
+                if attempt == retries && !suppress_errors {
+                    catch_error_and_exit(&format!(
+                        "Exception during stackql query execution:\n\n{}\n",
+                        e
+                    ));
                 }
             }
         }
@@ -164,11 +167,6 @@ pub fn run_stackql_query(
         thread::sleep(Duration::from_secs(delay as u64));
         attempt += 1;
     }
-
-    debug!(
-        "All attempts ({}) to execute the query completed.",
-        retries + 1
-    );
 
     // If suppress_errors and we have an error, return error marker
     if suppress_errors {
@@ -211,57 +209,54 @@ pub fn run_stackql_command(
     };
 
     while attempt <= retries {
-        debug!(
-            "Executing stackql command (attempt {}):\n\n{}\n",
-            attempt + 1,
-            processed_command
-        );
-
         match execute_query(&processed_command, client) {
-            Ok(result) => match result {
-                QueryResult::Data { notices, .. } => {
-                    // Check for errors in notices
-                    for notice in &notices {
-                        if error_detected_in_notice(notice) && !ignore_errors {
-                            if attempt < retries {
-                                warn!(
-                                        "Dependent resource(s) may not be ready, retrying in {} seconds (attempt {} of {})...",
-                                        retry_delay, attempt + 1, retries + 1
+            Ok(result) => {
+                match result {
+                    QueryResult::Data { notices, .. } => {
+                        // Check for errors in notices
+                        for notice in &notices {
+                            if error_detected_in_notice(notice) && !ignore_errors {
+                                if attempt < retries {
+                                    debug!(
+                                        "Command notice on attempt {}/{}, retrying in {} seconds: {}",
+                                        attempt + 1, retries + 1, retry_delay, notice
                                     );
-                                thread::sleep(Duration::from_secs(retry_delay as u64));
-                                attempt += 1;
-                                continue;
-                            } else {
-                                catch_error_and_exit(&format!(
-                                    "Error during stackql command execution:\n\n{}\n",
-                                    notice
-                                ));
+                                    thread::sleep(Duration::from_secs(retry_delay as u64));
+                                    attempt += 1;
+                                    continue;
+                                } else {
+                                    catch_error_and_exit(&format!(
+                                        "Error during stackql command execution:\n\n{}\n",
+                                        notice
+                                    ));
+                                }
                             }
                         }
+                        let msg = notices.join("\n");
+                        if !msg.is_empty() {
+                            debug!("Stackql command executed successfully:\n\n{}\n", msg);
+                        }
+                        return msg;
                     }
-                    let msg = notices.join("\n");
-                    if !msg.is_empty() {
+                    QueryResult::Command(msg) => {
                         debug!("Stackql command executed successfully:\n\n{}\n", msg);
+                        return msg;
                     }
-                    return msg;
+                    QueryResult::Empty => {
+                        debug!("Command executed with empty result");
+                        return String::new();
+                    }
                 }
-                QueryResult::Command(msg) => {
-                    debug!("Stackql command executed successfully:\n\n{}\n", msg);
-                    return msg;
-                }
-                QueryResult::Empty => {
-                    debug!("Command executed with empty result");
-                    return String::new();
-                }
-            },
+            }
             Err(e) => {
                 if !ignore_errors {
                     if attempt < retries {
-                        warn!(
-                            "Command failed, retrying in {} seconds (attempt {} of {})...",
-                            retry_delay,
+                        debug!(
+                            "Command returned error on attempt {}/{}, retrying in {} seconds: {}",
                             attempt + 1,
-                            retries + 1
+                            retries + 1,
+                            retry_delay,
+                            e
                         );
                         thread::sleep(Duration::from_secs(retry_delay as u64));
                         attempt += 1;
@@ -299,24 +294,40 @@ pub fn run_test(
     client: &mut PgwireLite,
     delete_test: bool,
 ) -> bool {
+    run_test_with_fields(resource_name, query, client, delete_test).0
+}
+
+/// Run a test query and capture any non-count fields from the result.
+///
+/// Returns `(bool, Option<HashMap<String, String>>)`:
+/// - The bool indicates whether the test passed (resource exists / is deleted).
+/// - If the exists query returns fields OTHER than `count`, those fields are
+///   captured and returned so the caller can inject them into the template
+///   context (e.g. as `{{ this.identifier }}`).
+pub fn run_test_with_fields(
+    resource_name: &str,
+    query: &str,
+    client: &mut PgwireLite,
+    delete_test: bool,
+) -> (bool, Option<HashMap<String, String>>) {
     let result = run_stackql_query(query, client, true, 0, 5);
 
     if result.is_empty() {
         if delete_test {
             debug!("Delete test result true for [{}]", resource_name);
-            return true;
+            return (true, None);
         } else {
             debug!("Test result false for [{}]", resource_name);
-            return false;
+            return (false, None);
         }
     }
 
     // Check for error markers
     if result[0].contains_key("_stackql_deploy_error") || result[0].contains_key("error") {
         if delete_test {
-            return true;
+            return (true, None);
         }
-        return false;
+        return (false, None);
     }
 
     if let Some(count_str) = result[0].get("count") {
@@ -324,33 +335,75 @@ pub fn run_test(
             if delete_test {
                 if count == 0 {
                     debug!("Delete test result true for [{}]", resource_name);
-                    return true;
+                    return (true, None);
                 } else {
                     debug!(
                         "Delete test result false for [{}], expected 0 got {}",
                         resource_name, count
                     );
-                    return false;
+                    return (false, None);
                 }
             } else if count == 1 {
                 debug!("Test result true for [{}]", resource_name);
-                return true;
+                // Capture any extra fields beyond "count"
+                let extra = extract_non_count_fields(&result[0]);
+                return (true, extra);
             } else {
                 debug!(
                     "Test result false for [{}], expected 1 got {}",
                     resource_name, count
                 );
-                return false;
+                return (false, None);
             }
         }
     }
 
     // If no count field, for non-delete test consider any result as exists
-    if !delete_test && !result.is_empty() {
-        return true;
+    // and capture all returned fields.
+    // However, if multiple rows are returned this is a fatal error — the
+    // exists (identifier) query must return exactly 0 or 1 rows.
+    if !delete_test && result.len() > 1 {
+        catch_error_and_exit(&format!(
+            "Exists query for [{}] returned {} rows (expected 0 or 1). \
+             This indicates an ambiguous resource identifier — fix the \
+             exists query or tag configuration so it returns a single row.",
+            resource_name,
+            result.len()
+        ));
     }
 
-    false
+    // However, if all non-trivial field values are "null" or empty, treat
+    // as "does not exist" (e.g. a CASE WHEN that returned NULL).
+    if !delete_test && !result.is_empty() {
+        let row = &result[0];
+        let all_null = row.values().all(|v| v == "null" || v.is_empty());
+        if all_null {
+            debug!(
+                "Test result false for [{}]: all field values are null/empty",
+                resource_name
+            );
+            return (false, None);
+        }
+        let fields = Some(row.clone());
+        return (true, fields);
+    }
+
+    (false, None)
+}
+
+/// Extract fields from an exists query result row, excluding the `count` field.
+/// Returns `Some(map)` if there are non-count fields, `None` otherwise.
+fn extract_non_count_fields(row: &HashMap<String, String>) -> Option<HashMap<String, String>> {
+    let extra: HashMap<String, String> = row
+        .iter()
+        .filter(|(k, _)| k.as_str() != "count")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if extra.is_empty() {
+        None
+    } else {
+        Some(extra)
+    }
 }
 
 /// Perform retries on a test query.
@@ -363,13 +416,25 @@ pub fn perform_retries(
     client: &mut PgwireLite,
     delete_test: bool,
 ) -> bool {
+    perform_retries_with_fields(resource_name, query, retries, delay, client, delete_test).0
+}
+
+/// Perform retries on a test query, capturing any non-count fields from the result.
+pub fn perform_retries_with_fields(
+    resource_name: &str,
+    query: &str,
+    retries: u32,
+    delay: u32,
+    client: &mut PgwireLite,
+    delete_test: bool,
+) -> (bool, Option<HashMap<String, String>>) {
     let start = Instant::now();
     let mut attempt = 0;
 
     while attempt < retries {
-        let result = run_test(resource_name, query, client, delete_test);
+        let (result, fields) = run_test_with_fields(resource_name, query, client, delete_test);
         if result {
-            return true;
+            return (true, fields);
         }
         let elapsed = start.elapsed().as_secs();
         info!(
@@ -383,7 +448,7 @@ pub fn perform_retries(
         attempt += 1;
     }
 
-    false
+    (false, None)
 }
 
 /// Show a query in logs if show_queries is enabled.
@@ -633,12 +698,6 @@ pub fn run_stackql_dml_returning(
     let mut attempt = 0u32;
 
     while attempt <= retries {
-        debug!(
-            "Executing stackql DML (attempt {}):\n\n{}\n",
-            attempt + 1,
-            command
-        );
-
         match execute_query(command, client) {
             Ok(result) => match result {
                 QueryResult::Data {
@@ -651,9 +710,12 @@ pub fn run_stackql_dml_returning(
                     for notice in &notices {
                         if error_detected_in_notice(notice) && !ignore_errors {
                             if attempt < retries {
-                                warn!(
-                                    "DML error in notice, retrying in {} seconds (attempt {} of {})...",
-                                    retry_delay, attempt + 1, retries + 1
+                                debug!(
+                                    "DML notice on attempt {}/{}, retrying in {} seconds: {}",
+                                    attempt + 1,
+                                    retries + 1,
+                                    retry_delay,
+                                    notice
                                 );
                                 thread::sleep(Duration::from_secs(retry_delay as u64));
                                 attempt += 1;
@@ -699,11 +761,12 @@ pub fn run_stackql_dml_returning(
             Err(e) => {
                 if !ignore_errors {
                     if attempt < retries {
-                        warn!(
-                            "DML failed, retrying in {} seconds (attempt {} of {})...",
-                            retry_delay,
+                        debug!(
+                            "DML error on attempt {}/{}, retrying in {} seconds: {}",
                             attempt + 1,
-                            retries + 1
+                            retries + 1,
+                            retry_delay,
+                            e
                         );
                         thread::sleep(Duration::from_secs(retry_delay as u64));
                         attempt += 1;

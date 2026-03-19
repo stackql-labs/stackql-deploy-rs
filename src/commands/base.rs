@@ -17,9 +17,9 @@ use crate::core::env::load_env_vars;
 use crate::core::templating::{self, ParsedQuery};
 use crate::core::utils::{
     catch_error_and_exit, check_exports_as_statecheck_proxy, check_short_circuit, export_vars,
-    flatten_returning_row, has_returning_clause, perform_retries, pull_providers,
-    run_callback_poll, run_ext_script, run_stackql_command, run_stackql_dml_returning,
-    run_stackql_query, show_query,
+    flatten_returning_row, has_returning_clause, perform_retries, perform_retries_with_fields,
+    pull_providers, run_callback_poll, run_ext_script, run_stackql_command,
+    run_stackql_dml_returning, run_stackql_query, show_query,
 };
 use crate::resource::manifest::{Manifest, Resource};
 use crate::resource::validation::validate_manifest;
@@ -180,8 +180,29 @@ impl CommandRunner {
         templating::render_query(&self.engine, resource_name, anchor, template, full_context)
     }
 
+    /// Try to render a query template, returning None if variables are missing.
+    /// Used for deferred rendering where this.* fields may not yet be available.
+    pub fn try_render_query(
+        &self,
+        resource_name: &str,
+        anchor: &str,
+        template: &str,
+        full_context: &HashMap<String, String>,
+    ) -> Option<String> {
+        templating::try_render_query(&self.engine, resource_name, anchor, template, full_context)
+    }
+
     /// Check if a resource exists using the exists query.
     #[allow(clippy::too_many_arguments)]
+    /// Check if a resource exists by running the exists query.
+    ///
+    /// Returns `(bool, Option<HashMap<String, String>>)`:
+    /// - The bool indicates whether the resource exists.
+    /// - If the exists query returned fields OTHER than `count`, those fields
+    ///   are captured and returned.  The caller should inject them into the
+    ///   template context scoped to the resource (e.g. `this.identifier`) so
+    ///   that subsequent queries (statecheck, exports, delete) can reference
+    ///   the discovered identifier without a separate lookup.
     pub fn check_if_resource_exists(
         &mut self,
         resource: &Resource,
@@ -191,7 +212,7 @@ impl CommandRunner {
         dry_run: bool,
         show_queries: bool,
         delete_test: bool,
-    ) -> bool {
+    ) -> (bool, Option<HashMap<String, String>>) {
         let check_type = if delete_test { "post-delete" } else { "exists" };
 
         if dry_run {
@@ -199,13 +220,13 @@ impl CommandRunner {
                 "dry run {} check for [{}]:\n\n/* exists query */\n{}\n",
                 check_type, resource.name, exists_query
             );
-            return false;
+            return (false, None);
         }
 
         info!("running {} check for [{}]...", check_type, resource.name);
         show_query(show_queries, exists_query);
 
-        let exists = perform_retries(
+        let (exists, fields) = perform_retries_with_fields(
             &resource.name,
             exists_query,
             retries,
@@ -222,11 +243,20 @@ impl CommandRunner {
             }
         } else if exists {
             info!("[{}] exists", resource.name);
+            // Log any captured fields from the exists query
+            if let Some(ref f) = fields {
+                for (k, v) in f {
+                    info!(
+                        "exists query for [{}] captured field [this.{}] ({{ {}.{} }}) = [{}]",
+                        resource.name, k, resource.name, k, v
+                    );
+                }
+            }
         } else {
             info!("[{}] does not exist", resource.name);
         }
 
-        exists
+        (exists, fields)
     }
 
     /// Check if a resource is in the correct state.
@@ -353,7 +383,11 @@ impl CommandRunner {
                 retries,
                 retry_delay,
             );
-            debug!("Create response: {}", msg);
+            if msg.is_empty() && returning_row.is_none() {
+                debug!("Create response: no response");
+            } else {
+                debug!("Create response: {}", msg);
+            }
             (true, returning_row)
         } else {
             let msg = run_stackql_command(
@@ -363,7 +397,11 @@ impl CommandRunner {
                 retries,
                 retry_delay,
             );
-            debug!("Create response: {}", msg);
+            if msg.is_empty() {
+                debug!("Create response: no response");
+            } else {
+                debug!("Create response: {}", msg);
+            }
             (true, None)
         }
     }
@@ -412,7 +450,11 @@ impl CommandRunner {
                         retries,
                         retry_delay,
                     );
-                    debug!("Update response: {}", msg);
+                    if msg.is_empty() && returning_row.is_none() {
+                        debug!("Update response: no response");
+                    } else {
+                        debug!("Update response: {}", msg);
+                    }
                     (true, returning_row)
                 } else {
                     let msg = run_stackql_command(
@@ -422,7 +464,11 @@ impl CommandRunner {
                         retries,
                         retry_delay,
                     );
-                    debug!("Update response: {}", msg);
+                    if msg.is_empty() {
+                        debug!("Update response: no response");
+                    } else {
+                        debug!("Update response: {}", msg);
+                    }
                     (true, None)
                 }
             }
@@ -664,6 +710,27 @@ impl CommandRunner {
 
         if exports.is_empty() {
             if ignore_missing_exports {
+                // During teardown, set all expected exports to <unknown> so
+                // downstream queries can still render (the resource may
+                // already be partially deleted).
+                let mut fallback = HashMap::new();
+                for item in expected_exports {
+                    if let Some(s) = item.as_str() {
+                        fallback.insert(s.to_string(), "<unknown>".to_string());
+                    } else if let Some(map) = item.as_mapping() {
+                        for (_, val) in map {
+                            if let Some(v) = val.as_str() {
+                                fallback.insert(v.to_string(), "<unknown>".to_string());
+                            }
+                        }
+                    }
+                }
+                export_vars(
+                    &mut self.global_context,
+                    &resource.name,
+                    &fallback,
+                    protected_exports,
+                );
                 return;
             }
             show_query(true, exports_query);

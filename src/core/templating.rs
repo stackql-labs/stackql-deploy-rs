@@ -286,16 +286,10 @@ pub fn render_query(
 ) -> String {
     let temp_context = prepare_query_context(context);
 
-    debug!(
-        "[{}] [{}] query template:\n\n{}\n",
-        res_name, anchor, template
-    );
-
     let expanded = match preprocess_this_prefix(template, res_name) {
         Ok(t) => t,
         Err(e) => {
-            error!("[{}] [{}] {}", res_name, anchor, e);
-            process::exit(1);
+            crate::core::utils::catch_error_and_exit(&format!("[{}] [{}] {}", res_name, anchor, e));
         }
     };
 
@@ -307,7 +301,7 @@ pub fn render_query(
     match engine.render_with_filters(&template_name, &processed_query, &ctx) {
         Ok(rendered) => {
             debug!(
-                "[{}] [{}] rendered query:\n\n{}\n",
+                "Rendered [{}] [{}] query:\n\n{}\n",
                 res_name, anchor, rendered
             );
             rendered
@@ -348,8 +342,44 @@ pub fn render_query(
                 ctx.keys().collect::<Vec<_>>()
             );
 
-            process::exit(1);
+            crate::core::utils::catch_error_and_exit(&format!(
+                "Failed to render query for [{}] [{}]",
+                res_name, anchor
+            ));
         }
+    }
+}
+
+/// Try to render a query template, returning None if variables are missing.
+/// Used for deferred rendering where this.* fields may not yet be available.
+pub fn try_render_query(
+    engine: &TemplateEngine,
+    res_name: &str,
+    anchor: &str,
+    template: &str,
+    context: &HashMap<String, String>,
+) -> Option<String> {
+    let temp_context = prepare_query_context(context);
+
+    let expanded = match preprocess_this_prefix(template, res_name) {
+        Ok(t) => t,
+        Err(_) => return None,
+    };
+
+    let mut ctx = temp_context;
+    let compat_query = preprocess_jinja2_compat(&expanded);
+    let processed_query = preprocess_inline_dicts(&compat_query, &mut ctx);
+
+    let template_name = format!("{}__{}", res_name, anchor);
+    match engine.render_with_filters(&template_name, &processed_query, &ctx) {
+        Ok(rendered) => {
+            debug!(
+                "Rendered [{}] [{}] query:\n\n{}\n",
+                res_name, anchor, rendered
+            );
+            Some(rendered)
+        }
+        Err(_) => None,
     }
 }
 
