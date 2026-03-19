@@ -1,4 +1,4 @@
-const GITHUB_REPO = "stackql/stackql-deploy";
+const GITHUB_REPO = "stackql/stackql-deploy-rs";
 
 function getAssetName(ua: string): string {
   if (/windows/i.test(ua)) return "stackql-deploy-windows-x86_64.zip";
