@@ -8,6 +8,7 @@ stackql_history.txt
 stackql.log
 stackql-zip
 stackql-deploy
+.stackql-deploy-exports
 .env
 nohup.out
 contributors.csv

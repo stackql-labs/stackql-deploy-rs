@@ -143,3 +143,6 @@ resources:
     props: []
     exports:
       - public_dns_name
+
+exports:
+  - public_dns_name
