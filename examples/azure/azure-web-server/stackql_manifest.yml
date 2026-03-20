@@ -2,8 +2,8 @@
 # azure starter project manifest file, add and update values as needed
 #
 version: 1
-name: "azure-stack"
-description: description for "azure-stack"
+name: "azure-web-server"
+description: Provisions an Azure networking stack (resource group, VNet, subnet, NSG, public IP, NIC) with an Ubuntu VM running a web server.
 providers:
   - azure
 globals:

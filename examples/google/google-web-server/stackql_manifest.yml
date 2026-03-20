@@ -1,0 +1,117 @@
+version: 1
+name: "google-web-server"
+description: Provisions a Google Cloud VPC networking stack (network, subnet, firewall rules, static IP) with an e2-micro VM running an Apache web server.
+providers:
+  - google
+globals:
+  - name: project
+    description: google cloud project id
+    value: "{{ GOOGLE_PROJECT }}"
+  - name: region
+    value: "{{ GOOGLE_REGION }}"
+  - name: zone
+    value: "{{ GOOGLE_ZONE }}"
+resources:
+  - name: example_network
+    props:
+      - name: vpc_name
+        value: "{{ stack_name }}-{{ stack_env }}-vpc"
+    exports:
+      - vpc_name
+      - vpc_link
+  - name: example_subnetwork
+    props:
+      - name: subnet_name
+        value: "{{ stack_name }}-{{ stack_env }}-{{ region }}-subnet"
+      - name: ip_cidr_range
+        values:
+          prd:
+            value: "10.0.0.0/24"
+          sit:
+            value: "10.1.0.0/24"
+          dev:
+            value: "10.2.0.0/24"
+    exports:
+      - subnet_name
+      - subnet_link
+  - name: example_firewall_http
+    file: firewalls.iql
+    props:
+      - name: fw_name
+        value: "{{ stack_name }}-{{ stack_env }}-allow-http"
+      - name: fw_direction
+        value: INGRESS
+      - name: fw_source_ranges
+        value: ["0.0.0.0/0"]
+      - name: fw_allowed
+        value: [{IPProtocol: tcp, ports: ["80"]}]
+  - name: example_firewall_ssh
+    file: firewalls.iql
+    props:
+      - name: fw_name
+        value: "{{ stack_name }}-{{ stack_env }}-allow-ssh"
+      - name: fw_direction
+        value: INGRESS
+      - name: fw_source_ranges
+        values:
+          prd:
+            value: ["10.0.0.0/24"]
+          sit:
+            value: ["10.1.0.0/24"]
+          dev:
+            value: ["0.0.0.0/0"]
+      - name: fw_allowed
+        value: [{IPProtocol: tcp, ports: ["22"]}]
+  - name: example_public_ip
+    props:
+      - name: address_name
+        value: "{{ stack_name }}-{{ stack_env }}-ip"
+    exports:
+      - address
+  - name: example_web_server
+    props:
+      - name: instance_name
+        value: "{{ stack_name }}-{{ stack_env }}-vm"
+      - name: machine_type
+        value: "https://compute.googleapis.com/compute/v1/projects/{{ project }}/zones/{{ zone }}/machineTypes/e2-micro"
+      - name: disks
+        value:
+          - autoDelete: true
+            boot: true
+            initializeParams:
+              diskSizeGb: 10
+              sourceImage: https://compute.googleapis.com/compute/v1/projects/debian-cloud/global/images/family/debian-12
+            mode: READ_WRITE
+            type: PERSISTENT
+      - name: network_interfaces
+        value:
+          - subnetwork: "{{ subnet_link }}"
+            accessConfigs:
+              - name: external-nat
+                type: ONE_TO_ONE_NAT
+                natIP: "{{ address }}"
+      - name: tags
+        value:
+          items:
+            - "{{ stack_name }}"
+            - http-server
+      - name: metadata
+        value:
+          items:
+            - key: startup-script
+              value: |
+                #!/bin/bash
+                apt-get update
+                apt-get install -y apache2
+                systemctl start apache2
+                systemctl enable apache2
+                cat > /var/www/html/index.html << 'HTMLEOF'
+                <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>StackQL on GCP</title><style>body {font-family: Tahoma, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f0f0f0; text-align: center;} img {height: auto;} code {background-color: #e8e8e8; padding: 2px 6px; border-radius: 3px; font-weight: bold;} p {font-size: 1.5em; font-weight: bold;}</style></head><body><div><a href="https://github.com/stackql/stackql"><img src="https://stackql.io/img/stackql-logo-bold.png" alt="StackQL Logo"></a><p>Hello, <a href="https://crates.io/crates/stackql-deploy"><code>stackql-deploy</code></a> on GCP!</p></div></body></html>
+                HTMLEOF
+    exports:
+      - instance_name
+  - name: get_web_server_url
+    type: query
+    props: []
+    exports:
+      - web_server_url
