@@ -1,0 +1,8 @@
+export STACKQL_DEPLOY__stackql_serverless__dev__deployment_name='dbc-c83e88ed-1ad3'
+export STACKQL_DEPLOY__stackql_serverless__dev__elapsed_time='74.36s'
+export STACKQL_DEPLOY__stackql_serverless__dev__stack_env='dev'
+export STACKQL_DEPLOY__stackql_serverless__dev__stack_name='stackql-serverless'
+export STACKQL_DEPLOY__stackql_serverless__dev__workspace_id='7474653260057820'
+export STACKQL_DEPLOY__stackql_serverless__dev__workspace_name='stackql-serverless-dev-workspace'
+export STACKQL_DEPLOY__stackql_serverless__dev__workspace_status='RUNNING'
+export STACKQL_DEPLOY__stackql_serverless__dev__workspace_url='https://dbc-c83e88ed-1ad3.cloud.databricks.com'

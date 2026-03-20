@@ -1034,11 +1034,34 @@ impl CommandRunner {
         }
         println!("{}", sep);
 
-        // Set environment variables
+        // Write sourceable exports file
+        let exports_file = ".stackql-deploy-exports";
+        let mut export_lines = Vec::new();
         for (name, val) in &rows {
-            std::env::set_var(name, val);
+            // Escape single quotes in values
+            let escaped = val.replace('\'', "'\\''");
+            export_lines.push(format!("export {}='{}'", name, escaped));
         }
-        info!("{} variables exported as environment variables", rows.len());
+        match fs::write(exports_file, export_lines.join("\n") + "\n") {
+            Ok(_) => {
+                info!("{} variables written to {}", rows.len(), exports_file);
+                println!();
+                println!("To load these variables into your shell:");
+                if cfg!(target_os = "windows") {
+                    println!(
+                        "  PowerShell:  Get-Content {} | ForEach-Object {{ Invoke-Expression $_ }}",
+                        exports_file
+                    );
+                    println!("  Git Bash:    source {}", exports_file);
+                } else {
+                    println!("  source {}", exports_file);
+                }
+                println!();
+            }
+            Err(e) => {
+                error!("Failed to write exports file {}: {}", exports_file, e);
+            }
+        }
 
         // Write JSON file if --output-file was specified
         if let Some(output_file) = output_file {
