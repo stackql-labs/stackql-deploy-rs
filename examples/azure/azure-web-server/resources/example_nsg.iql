@@ -3,9 +3,9 @@ INSERT INTO azure.network.security_groups(
    networkSecurityGroupName,
    resourceGroupName,
    subscriptionId,
-   location,
-   properties,
-   tags
+   data__location,
+   data__properties,
+   data__tags
 )
 SELECT
    '{{ nsg_name }}',

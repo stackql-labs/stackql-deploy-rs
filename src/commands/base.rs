@@ -238,9 +238,9 @@ impl CommandRunner {
 
         if delete_test {
             if exists {
-                info!("[{}] still exists", resource.name);
-            } else {
                 info!("[{}] confirmed deleted", resource.name);
+            } else {
+                info!("[{}] still exists after post-delete check", resource.name);
             }
         } else if exists {
             info!("[{}] exists", resource.name);
@@ -483,21 +483,32 @@ impl CommandRunner {
         }
     }
 
-    /// Delete a resource.
+    /// Delete a resource and confirm deletion with an interleaved
+    /// delete-check-retry loop.
     ///
-    /// Returns `Some(first_row)` when the delete query included `RETURNING *`
-    /// and the provider returned data; `None` otherwise.
+    /// When `delete_retries > 0` the loop is:
+    ///   1. Execute DELETE
+    ///   2. Run exists query — count==0 → done, count==1 → continue, else → error
+    ///   3. Wait `delete_retry_delay` seconds
+    ///   4. Run exists query again — count==0 → done, count==1 → re-delete
+    ///      ... repeat up to `delete_retries` times
+    ///
+    /// When `delete_retries == 0`: single delete + single check, no retry.
+    ///
+    /// Returns the RETURNING * row (if any) from the first successful delete.
     #[allow(clippy::too_many_arguments)]
-    pub fn delete_resource(
+    pub fn delete_and_confirm(
         &mut self,
         resource: &Resource,
         delete_query: &str,
-        retries: u32,
-        retry_delay: u32,
+        exists_query: &str,
+        delete_retries: u32,
+        delete_retry_delay: u32,
         dry_run: bool,
         show_queries: bool,
         ignore_errors: bool,
-    ) -> Option<HashMap<String, String>> {
+    ) -> (Option<HashMap<String, String>>, bool) {
+        // --- dry run path ---
         if dry_run {
             if has_returning_clause(delete_query) {
                 info!(
@@ -510,33 +521,190 @@ impl CommandRunner {
                     resource.name, delete_query
                 );
             }
-            return None;
+            return (None, true);
         }
 
-        info!("deleting [{}]...", resource.name);
-        show_query(show_queries, delete_query);
+        let mut returning_row: Option<HashMap<String, String>> = None;
 
-        if has_returning_clause(delete_query) {
-            let (msg, returning_row) = run_stackql_dml_returning(
-                delete_query,
+        // Helper closure: execute the DELETE statement once (no retries on the
+        // DML itself — retries are handled by the outer loop).
+        let execute_delete = |client: &mut crate::utils::pgwire::PgwireLite,
+                              query: &str,
+                              res_name: &str,
+                              sq: bool,
+                              ignore: bool| {
+            info!("deleting [{}]...", res_name);
+            show_query(sq, query);
+            if has_returning_clause(query) {
+                let (msg, row) = run_stackql_dml_returning(query, client, ignore, 0, 0);
+                debug!("Delete response: {}", msg);
+                row
+            } else {
+                let msg = run_stackql_command(query, client, ignore, 0, 0);
+                debug!("Delete response: {}", msg);
+                None
+            }
+        };
+
+        // Helper closure: run the exists query and return the count.
+        // Returns Ok(count) or Err(msg) for unexpected results.
+        let run_exists_count = |client: &mut crate::utils::pgwire::PgwireLite,
+                                query: &str,
+                                res_name: &str,
+                                sq: bool|
+         -> Result<i64, String> {
+            info!("running post-delete check for [{}]...", res_name);
+            show_query(sq, query);
+            let result = run_stackql_query(query, client, true, 0, 5);
+            if result.is_empty() {
+                return Ok(0); // no rows → resource gone
+            }
+            if result[0].contains_key("_stackql_deploy_error") || result[0].contains_key("error") {
+                return Ok(0); // error querying → treat as gone
+            }
+            if let Some(count_str) = result[0].get("count") {
+                if let Ok(count) = count_str.parse::<i64>() {
+                    return Ok(count);
+                }
+            }
+            // No count field — check if all field values are null/empty
+            // (resource gone) or any non-null value (resource still exists).
+            let row = &result[0];
+            let all_null = row.values().all(|v| v == "null" || v.is_empty());
+            if all_null {
+                Ok(0) // all null/empty → resource gone
+            } else {
+                Ok(1) // non-null value → resource still exists
+            }
+        };
+
+        // --- no-retry path: single delete + single check ---
+        if delete_retries == 0 {
+            let row = execute_delete(
                 &mut self.client,
-                ignore_errors,
-                retries,
-                retry_delay,
-            );
-            debug!("Delete response: {}", msg);
-            returning_row
-        } else {
-            let msg = run_stackql_command(
                 delete_query,
-                &mut self.client,
+                &resource.name,
+                show_queries,
                 ignore_errors,
-                retries,
-                retry_delay,
             );
-            debug!("Delete response: {}", msg);
-            None
+            if returning_row.is_none() {
+                returning_row = row;
+            }
+            match run_exists_count(&mut self.client, exists_query, &resource.name, show_queries) {
+                Ok(0) => {
+                    info!("[{}] confirmed deleted", resource.name);
+                    return (returning_row, true);
+                }
+                Ok(1) => {
+                    info!(
+                        "[{}] delete dispatched (resource may still be deleting asynchronously)",
+                        resource.name
+                    );
+                    return (returning_row, false);
+                }
+                Ok(n) => {
+                    catch_error_and_exit(&format!(
+                        "Post-delete exists query for [{}] returned count={} (expected 0 or 1). \
+                         This indicates a query or logic error.",
+                        resource.name, n
+                    ));
+                }
+                Err(msg) => {
+                    catch_error_and_exit(&msg);
+                }
+            }
         }
+
+        // --- retry path: interleaved delete + check loop ---
+        let start = std::time::Instant::now();
+
+        for attempt in 0..delete_retries {
+            // Step 1: execute DELETE
+            let row = execute_delete(
+                &mut self.client,
+                delete_query,
+                &resource.name,
+                show_queries,
+                ignore_errors,
+            );
+            if returning_row.is_none() {
+                returning_row = row;
+            }
+
+            // Step 2: immediate post-delete check
+            match run_exists_count(&mut self.client, exists_query, &resource.name, show_queries) {
+                Ok(0) => {
+                    info!("[{}] confirmed deleted", resource.name);
+                    return (returning_row, true);
+                }
+                Ok(1) => {
+                    let elapsed = start.elapsed().as_secs();
+                    info!(
+                        "[{}] still exists after delete, attempt {}/{} ({} seconds elapsed)",
+                        resource.name,
+                        attempt + 1,
+                        delete_retries,
+                        elapsed
+                    );
+                }
+                Ok(n) => {
+                    catch_error_and_exit(&format!(
+                        "Post-delete exists query for [{}] returned count={} (expected 0 or 1). \
+                         This indicates a query or logic error.",
+                        resource.name, n
+                    ));
+                }
+                Err(msg) => {
+                    catch_error_and_exit(&msg);
+                }
+            }
+
+            // Step 3: wait retry_delay
+            if delete_retry_delay > 0 {
+                info!(
+                    "[{}] waiting {} seconds before next attempt...",
+                    resource.name, delete_retry_delay
+                );
+                std::thread::sleep(std::time::Duration::from_secs(delete_retry_delay as u64));
+            }
+
+            // Step 4: check again after the delay (maybe it cleaned up)
+            match run_exists_count(&mut self.client, exists_query, &resource.name, show_queries) {
+                Ok(0) => {
+                    info!("[{}] confirmed deleted", resource.name);
+                    return (returning_row, true);
+                }
+                Ok(1) => {
+                    let elapsed = start.elapsed().as_secs();
+                    info!(
+                        "[{}] still exists after delay, attempt {}/{} ({} seconds elapsed), re-issuing delete...",
+                        resource.name,
+                        attempt + 1,
+                        delete_retries,
+                        elapsed
+                    );
+                    // Loop continues → next iteration will re-issue DELETE
+                }
+                Ok(n) => {
+                    catch_error_and_exit(&format!(
+                        "Post-delete exists query for [{}] returned count={} (expected 0 or 1). \
+                         This indicates a query or logic error.",
+                        resource.name, n
+                    ));
+                }
+                Err(msg) => {
+                    catch_error_and_exit(&msg);
+                }
+            }
+        }
+
+        // Exhausted all retries
+        let elapsed = start.elapsed().as_secs();
+        info!(
+            "[{}] delete could not be confirmed after {} attempts ({} seconds elapsed)",
+            resource.name, delete_retries, elapsed
+        );
+        (returning_row, false)
     }
 
     // -----------------------------------------------------------------------

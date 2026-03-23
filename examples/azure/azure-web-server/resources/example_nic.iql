@@ -3,9 +3,9 @@ INSERT INTO azure.network.interfaces(
    networkInterfaceName,
    resourceGroupName,
    subscriptionId,
-   location,
-   properties,
-   tags
+   data__location,
+   data__properties,
+   data__tags
 )
 SELECT
    '{{ nic_name }}',

@@ -12,7 +12,7 @@ globals:
     value: "{{ AZURE_SUBSCRIPTION_ID }}"
   - name: location
     description: default location for resources
-    value: eastus
+    value: eastus2
   - name: admin_password
     description: vm admin password
     value: "{{ AZURE_VM_ADMIN_PASSWORD }}"    
@@ -115,13 +115,13 @@ resources:
         value: "{{ stack_name }}-{{ stack_env }}-vm"
       - name: hardwareProfile
         value:
-          vmSize: Standard_DS1_v2
+          vmSize: Standard_F1als_v7 
       - name: storageProfile
         value:
           imageReference:
             publisher: Canonical
-            offer: UbuntuServer
-            sku: 18.04-LTS
+            offer: ubuntu-24_04-lts
+            sku: server
             version: latest
           osDisk:
             name: "{{ stack_name }}-{{ stack_env }}-vm-disk1"
@@ -148,7 +148,6 @@ resources:
       - name: vm_ext_name
         value: "{{ stack_name }}-{{ stack_env }}-microsoft.custom-script-linux"
       - name: command_to_execute
-        value: |
-          wget -O index.html https://raw.githubusercontent.com/stackql/stackql-deploy/main/examples/azure/azure-stack/resources/hello-stackql.html && nohup busybox httpd -f -p 8080 &
+        value: "wget -O index.html https://raw.githubusercontent.com/stackql/stackql-deploy/main/examples/azure/azure-stack/resources/hello-stackql.html && nohup busybox httpd -f -p 8080 &"
     exports:
       - web_url

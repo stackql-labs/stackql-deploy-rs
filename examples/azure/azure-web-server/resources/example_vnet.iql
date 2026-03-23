@@ -3,9 +3,9 @@ INSERT INTO azure.network.virtual_networks(
    virtualNetworkName,
    resourceGroupName, 
    subscriptionId, 
-   location,
-   properties,
-   tags   
+   data__location,
+   data__properties,
+   data__tags   
 )
 SELECT
    '{{ vnet_name }}',

@@ -63,7 +63,7 @@ flowchart LR
 ### Deploy
 
 ```bash
-stackql-deploy build examples/azure/azure-web-server dev \
+target/release/stackql-deploy build examples/azure/azure-web-server dev \
   -e AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID} \
   -e AZURE_VM_ADMIN_PASSWORD=${AZURE_VM_ADMIN_PASSWORD}
 ```

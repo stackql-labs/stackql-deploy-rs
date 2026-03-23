@@ -4,7 +4,7 @@ INSERT INTO azure.network.subnets(
    virtualNetworkName,
    resourceGroupName, 
    subscriptionId, 
-   properties
+   data__properties
 )
 SELECT
    '{{ subnet_name }}',

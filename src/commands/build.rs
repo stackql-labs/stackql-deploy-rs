@@ -722,6 +722,14 @@ fn run_build(
                     }
                 }
 
+                // If exports wasn't rendered yet (e.g. no exists query to
+                // trigger it), try now — the context may already contain all
+                // the variables the exports template needs.
+                if exports_query_str.is_none() {
+                    exports_query_str =
+                        render_exports!(runner, resource_queries, resource, &full_context);
+                }
+
                 debug!(
                     "post-deploy for [{}]: is_correct_state={}, has_statecheck={}, exports_query_str={}",
                     resource.name,
