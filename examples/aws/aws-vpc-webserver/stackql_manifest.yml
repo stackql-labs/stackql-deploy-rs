@@ -136,6 +136,9 @@ resources:
           - Key: Name
             Value: "{{ stack_name }}-{{ stack_env }}-instance"
         merge: ['global_tags']
+    return_vals:
+      create:
+        - Identifier: instance_id
     exports:
       - instance_id
   - name: get_web_server_url

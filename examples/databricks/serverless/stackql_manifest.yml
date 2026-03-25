@@ -65,8 +65,6 @@ resources:
         value: []
       - name: max_session_duration
         value: 3600
-      - name: permissions_boundary
-        value: ""
       - name: tags
         value: []
         merge:
