@@ -79,7 +79,7 @@ install stackql-deploy from https://github.com/stackql/stackql-deploy-rs/release
 Then, do a dry run (good for catching **some** environmental issues):
 
 ```bash
-stackql-deploy build \
+target/release/stackql-deploy build \
 examples/databricks/serverless dev \
 -e AWS_REGION=${AWS_REGION} \
 -e AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID} \

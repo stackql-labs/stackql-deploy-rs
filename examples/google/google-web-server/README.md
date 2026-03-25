@@ -64,17 +64,27 @@ examples/google/google-web-server dev \
 ### Test
 
 ```bash
-stackql-deploy test examples/google/google-web-server dev
+target/release/stackql-deploy test \
+examples/google/google-web-server dev \
+-e GOOGLE_PROJECT=${GOOGLE_PROJECT} \
+-e GOOGLE_REGION=${GOOGLE_REGION} \
+-e GOOGLE_ZONE=${GOOGLE_ZONE}
 ```
 
 ### Teardown
 
 ```bash
-stackql-deploy teardown examples/google/google-web-server dev
+target/release/stackql-deploy teardown \
+examples/google/google-web-server dev \
+-e GOOGLE_PROJECT=${GOOGLE_PROJECT} \
+-e GOOGLE_REGION=${GOOGLE_REGION} \
+-e GOOGLE_ZONE=${GOOGLE_ZONE}
 ```
 
 ### Debug mode
 
 ```bash
-stackql-deploy build examples/google/google-web-server dev --log-level debug
+target/release/stackql-deploy build \
+examples/google/google-web-server dev \
+--log-level debug
 ```
