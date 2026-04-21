@@ -107,65 +107,62 @@ fn collect_exports(runner: &mut CommandRunner, show_queries: bool, dry_run: bool
             continue;
         }
 
-        let (exports_query, exports_retries, exports_retry_delay) =
-            if let Some(sql_val) = resource.sql.as_ref().filter(|_| res_type == "query") {
-                let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
-                (Some(iq), 1u32, 0u32)
-            } else {
-                let queries = runner.get_queries(resource, &full_context);
-                // Run exists query first to capture this.* fields needed by
-                // exports (e.g. this.identifier).
-                if let Some(eq) = queries.get("exists") {
-                    if let Some(rendered) = runner.try_render_query(
-                        &resource.name,
-                        "exists",
-                        &eq.template,
-                        &full_context,
-                    ) {
-                        let (_exists, fields) = runner.check_if_resource_exists(
-                            resource,
-                            &rendered,
-                            eq.options.retries,
-                            eq.options.retry_delay,
-                            dry_run,
-                            show_queries,
-                            false,
-                        );
-                        if let Some(ref f) = fields {
-                            for (k, v) in f {
-                                full_context
-                                    .insert(format!("{}.{}", resource.name, k), v.clone());
-                            }
-                        }
-                    } else {
-                        info!(
-                            "[{}] exists query has unresolved variables, assuming resource does not exist",
-                            resource.name
-                        );
-                    }
-                }
-                if let Some(eq) = queries.get("exports") {
-                    match runner.try_render_query(
-                        &resource.name,
-                        "exports",
-                        &eq.template,
-                        &full_context,
-                    ) {
-                        // During teardown use minimal retries - the resource may
-                        // already be partially deleted.
-                        Some(rendered) => (Some(rendered), 1u32, 0u32),
-                        None => {
-                            info!(
-                                "[{}] exports query has unresolved variables, skipping exports collection",
-                                resource.name
-                            );
-                            (None, 1u32, 0u32)
+        let (exports_query, exports_retries, exports_retry_delay) = if let Some(sql_val) =
+            resource.sql.as_ref().filter(|_| res_type == "query")
+        {
+            let iq = runner.render_inline_template(&resource.name, sql_val, &full_context);
+            (Some(iq), 1u32, 0u32)
+        } else {
+            let queries = runner.get_queries(resource, &full_context);
+            // Run exists query first to capture this.* fields needed by
+            // exports (e.g. this.identifier).
+            if let Some(eq) = queries.get("exists") {
+                if let Some(rendered) =
+                    runner.try_render_query(&resource.name, "exists", &eq.template, &full_context)
+                {
+                    let (_exists, fields) = runner.check_if_resource_exists(
+                        resource,
+                        &rendered,
+                        eq.options.retries,
+                        eq.options.retry_delay,
+                        dry_run,
+                        show_queries,
+                        false,
+                    );
+                    if let Some(ref f) = fields {
+                        for (k, v) in f {
+                            full_context.insert(format!("{}.{}", resource.name, k), v.clone());
                         }
                     }
                 } else {
-                    (None, 1u32, 0u32)
+                    info!(
+                            "[{}] exists query has unresolved variables, assuming resource does not exist",
+                            resource.name
+                        );
                 }
-            };
+            }
+            if let Some(eq) = queries.get("exports") {
+                match runner.try_render_query(
+                    &resource.name,
+                    "exports",
+                    &eq.template,
+                    &full_context,
+                ) {
+                    // During teardown use minimal retries - the resource may
+                    // already be partially deleted.
+                    Some(rendered) => (Some(rendered), 1u32, 0u32),
+                    None => {
+                        info!(
+                                "[{}] exports query has unresolved variables, skipping exports collection",
+                                resource.name
+                            );
+                        (None, 1u32, 0u32)
+                    }
+                }
+            } else {
+                (None, 1u32, 0u32)
+            }
+        };
 
         if let Some(ref eq_str) = exports_query {
             runner.process_exports(

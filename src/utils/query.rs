@@ -100,16 +100,14 @@ pub fn execute_query(query: &str, client: &mut PgwireLite) -> Result<QueryResult
                     // request_id); collapse lines to a single canonical
                     // form so each distinct response body prints once.
                     if let Some(detail) = notice.fields.get("detail") {
-                        let volatile_ids = regex::Regex::new(
-                            r#""request_id":"[^"]*"|"serving_data":"[^"]*""#,
-                        )
-                        .unwrap();
+                        let volatile_ids =
+                            regex::Regex::new(r#""request_id":"[^"]*"|"serving_data":"[^"]*""#)
+                                .unwrap();
                         let mut seen = std::collections::HashSet::new();
                         let deduped: Vec<&str> = detail
                             .lines()
                             .filter(|line| {
-                                let canonical =
-                                    volatile_ids.replace_all(line, "").to_string();
+                                let canonical = volatile_ids.replace_all(line, "").to_string();
                                 seen.insert(canonical)
                             })
                             .collect();

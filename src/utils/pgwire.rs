@@ -231,9 +231,9 @@ impl PgwireLite {
         let mut buf = [0u8; 4096];
         loop {
             match self.stream.read(&mut buf) {
-                Ok(0) => break,          // EOF
-                Ok(_) => continue,        // keep draining
-                Err(_) => break,          // WouldBlock or other — nothing more pending
+                Ok(0) => break,    // EOF
+                Ok(_) => continue, // keep draining
+                Err(_) => break,   // WouldBlock or other — nothing more pending
             }
         }
         let _ = self.stream.set_nonblocking(false);
