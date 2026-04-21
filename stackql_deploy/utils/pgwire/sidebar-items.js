@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Value"],"fn":["parse_data_row","parse_error_fields","parse_notice_fields","parse_row_description"],"struct":["Notice","PgQueryResult","PgwireLite"]};
+window.SIDEBAR_ITEMS = {"enum":["Value"],"fn":["canonical_line","filter_stale_notices","parse_data_row","parse_error_fields","parse_notice_fields","parse_row_description"],"struct":["Notice","PgQueryResult","PgwireLite"]};
