@@ -1,7 +1,7 @@
 /target
 stackql
 /.stackql
-stackql*.sh
+stackql*shell.sh
 stackql*.zip
 stackql*.pkg
 stackql_history.txt
@@ -14,3 +14,4 @@ nohup.out
 contributors.csv
 .claude/
 nohup.out
+tmp/

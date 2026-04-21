@@ -904,6 +904,12 @@ fn run_build(
                         );
                         is_correct_state = true;
                     }
+                } else if has_createorupdate {
+                    info!(
+                        "createorupdate for [{}] is authoritative, skipping exports-as-statecheck proxy",
+                        resource.name
+                    );
+                    is_correct_state = true;
                 } else if let Some(ref eq_str) = exports_query_str {
                     info!(
                         "using exports query as post-deploy statecheck for [{}]",

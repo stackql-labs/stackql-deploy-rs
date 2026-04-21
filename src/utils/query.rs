@@ -94,10 +94,25 @@ pub fn execute_query(query: &str, client: &mut PgwireLite) -> Result<QueryResult
                         .cloned()
                         .unwrap_or_else(|| "Unknown notice".to_string());
 
-                    // Add detail if available
+                    // Add detail if available. stackql sometimes emits two
+                    // `http response status code: ...` lines for a single
+                    // provider error (differing only in a volatile
+                    // request_id); collapse lines to a single canonical
+                    // form so each distinct response body prints once.
                     if let Some(detail) = notice.fields.get("detail") {
+                        let volatile_ids =
+                            regex::Regex::new(r#""request_id":"[^"]*"|"serving_data":"[^"]*""#)
+                                .unwrap();
+                        let mut seen = std::collections::HashSet::new();
+                        let deduped: Vec<&str> = detail
+                            .lines()
+                            .filter(|line| {
+                                let canonical = volatile_ids.replace_all(line, "").to_string();
+                                seen.insert(canonical)
+                            })
+                            .collect();
                         notice_text.push_str("\nDETAIL: ");
-                        notice_text.push_str(detail);
+                        notice_text.push_str(&deduped.join("\n"));
                     }
 
                     // Add hint if available

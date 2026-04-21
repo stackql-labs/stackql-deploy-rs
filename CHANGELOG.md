@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.7 (2026-04-19)
+
+### Fixes
+
+- Fixed post-deploy failure for `createorupdate` resources whose `exports` anchor is a literal `SELECT` with no `FROM` clause (a supported and common pattern when the values to export are already known and an extra API round-trip is wasteful). Previously the exports query was executed as a statecheck proxy, and a FROM-less result caused the proxy check to report the resource was not in the desired state, aborting the run. With `createorupdate`, the DML is authoritative, so the exports-as-statecheck proxy is now skipped entirely - `exports` still runs to populate the global context for downstream resources.
+- Fixed `stackql-deploy upgrade` downloading the stackql binary twice when the binary was missing: the pre-command binary check triggered a download, and the subcommand dispatch then triggered a second download. `upgrade` is now exempt from the pre-command binary check.
+- Server-side notices from provider HTTP 4xx/5xx responses are now detected even when stackql wraps them as a generic `a notice level event has occurred` message with the real status code in the `DETAIL:` payload. Previously these escaped the error check and the `create`/`update`/`delete` operation silently appeared to succeed while the post-deploy `exists` check spun through its retries.
+- Collapsed duplicate lines within a single notice's `DETAIL:` payload so repeated provider error bodies are printed once.
+- Teardown now tolerates resources with unresolved template variables. If an `exists`, `exports`, or `delete` query references a variable that was never populated (because an upstream resource doesn't exist), the resource is treated as already torn down and skipped, instead of aborting the run. Stacks in a half-baked state can now be torn down cleanly.
+- During teardown, `RETURNING` clauses are stripped from rendered `delete` DML when `return_vals.delete` is not configured for the resource. Some providers reject `RETURNING *` on `DELETE`, and teardown has no consumer for the returned data unless the manifest explicitly opts in via `return_vals.delete`. When `return_vals.delete` is configured the `RETURNING` clause is preserved and mapped fields are captured as `this.*` with non-fatal warnings if a mapping cannot be satisfied.
+- Stale provider notices are no longer re-surfaced on subsequent queries. stackql emits a cumulative `NoticeResponse` on every query that includes every provider notice observed earlier in the session; the pgwire client now tracks each notice line already surfaced and drops byte-identical re-emissions. Dedup is exact-match (no canonicalization) so two distinct provider errors — which always differ in their embedded request/serving IDs — are never conflated. Fixes spurious `create`/`update`/`delete` failures where a 4xx provider response from an earlier `exists` SELECT was attributed to a later DML.
+
+### Features
+
+- When retries are exhausted on a `statecheck`, `exports` proxy, or post-deploy `exists` check, the last rendered query is now logged at `warn` level so the failing SQL is visible without needing `--show-queries` or `--log-level debug`. Pre-create exists checks (which fast-fail by design) stay silent.
+
 ## 2.0.6 (2026-03-28)
 
 ### Fixes

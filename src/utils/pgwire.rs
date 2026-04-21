@@ -6,7 +6,7 @@
 //! to a local StackQL server using the PostgreSQL simple query protocol (v3).
 //! No native dependencies (replaces pgwire-lite → libpq-sys).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
@@ -37,6 +37,12 @@ pub struct PgQueryResult {
 /// Minimal PostgreSQL wire-protocol client.
 pub struct PgwireLite {
     stream: TcpStream,
+    /// Canonical signatures of every notice line surfaced earlier in this
+    /// session. stackql emits each new query's NoticeResponse with a
+    /// cumulative `detail` field containing every provider notice seen so
+    /// far. Any detail line already present in this set is stale and
+    /// dropped from subsequent query results.
+    seen_notice_sigs: HashSet<String>,
 }
 
 impl PgwireLite {
@@ -49,7 +55,10 @@ impl PgwireLite {
         let stream = TcpStream::connect(&addr)
             .map_err(|e| format!("Connection to {} failed: {}", addr, e))?;
 
-        let mut client = PgwireLite { stream };
+        let mut client = PgwireLite {
+            stream,
+            seen_notice_sigs: HashSet::new(),
+        };
         client.startup()?;
         Ok(client)
     }
@@ -118,6 +127,12 @@ impl PgwireLite {
 
     /// Execute a simple (non-prepared) SQL query and return structured results.
     pub fn query(&mut self, sql: &str) -> Result<PgQueryResult, String> {
+        // Drain any bytes the server may have emitted outside a prior query's
+        // response window. stackql has been observed to re-emit stale
+        // NoticeResponse frames from earlier statements, which would
+        // otherwise be attributed to this query.
+        self.drain_pending();
+
         // Send Query message: 'Q' | int32(len) | sql\0
         let sql_bytes = sql.as_bytes();
         let payload_len = 4 + sql_bytes.len() + 1; // length field + sql + null
@@ -187,12 +202,41 @@ impl PgwireLite {
             }
         }
 
+        // Drop any detail lines we've already surfaced earlier in this
+        // session; stackql keeps re-emitting them on every subsequent
+        // query's NoticeResponse.
+        let kept = filter_stale_notices(notices, &mut self.seen_notice_sigs);
+
         Ok(PgQueryResult {
             column_names,
             rows,
-            notices,
+            notices: kept,
             row_count,
         })
+    }
+
+    /// Discard any bytes the server sent outside a query response window.
+    ///
+    /// The server is expected to stay silent between queries (the prior
+    /// response ended with `ReadyForQuery` / `'Z'`). stackql has been
+    /// observed to emit stray `NoticeResponse` frames referring to
+    /// previously-executed statements; if left in the socket buffer those
+    /// frames would be read at the start of the next query and
+    /// misattributed. Best-effort non-blocking read; any I/O error is
+    /// swallowed since the normal path is zero bytes available.
+    fn drain_pending(&mut self) {
+        if self.stream.set_nonblocking(true).is_err() {
+            return;
+        }
+        let mut buf = [0u8; 4096];
+        loop {
+            match self.stream.read(&mut buf) {
+                Ok(0) => break,    // EOF
+                Ok(_) => continue, // keep draining
+                Err(_) => break,   // WouldBlock or other — nothing more pending
+            }
+        }
+        let _ = self.stream.set_nonblocking(false);
     }
 
     // ------------------------------------------------------------------
@@ -222,6 +266,84 @@ impl PgwireLite {
             .map_err(|e| format!("Read error: {}", e))?;
         Ok(buf)
     }
+}
+
+// ------------------------------------------------------------------
+// Stale notice filtering
+// ------------------------------------------------------------------
+
+/// Build a signature for a notice line. Dedup uses exact byte-match (after
+/// trimming) so two genuine provider errors — which always differ in their
+/// embedded request/serving IDs — are never conflated. A re-emitted stale
+/// notice is byte-identical to its first emission and dedups cleanly.
+fn canonical_line(line: &str) -> String {
+    line.trim().to_string()
+}
+
+/// Drop detail lines whose canonical signature was already surfaced earlier
+/// in the session. `seen` is mutated in place: every line that survives
+/// filtering is added so it counts as stale on subsequent queries. A notice
+/// whose message is stale and whose detail becomes empty after filtering is
+/// dropped entirely.
+fn filter_stale_notices(notices: Vec<Notice>, seen: &mut HashSet<String>) -> Vec<Notice> {
+    let mut kept = Vec::with_capacity(notices.len());
+
+    for n in notices {
+        let message_stale = n
+            .fields
+            .get("message")
+            .map(|m| seen.contains(&format!("M|{}", canonical_line(m))))
+            .unwrap_or(false);
+
+        let filtered_detail = n.fields.get("detail").map(|detail| {
+            detail
+                .lines()
+                .filter(|line| {
+                    let c = canonical_line(line);
+                    c.is_empty() || !seen.contains(&format!("D|{}", c))
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+
+        let has_detail_content = filtered_detail
+            .as_deref()
+            .map(|d| !d.trim().is_empty())
+            .unwrap_or(false);
+
+        if message_stale && !has_detail_content {
+            continue;
+        }
+
+        // Mark the surviving signatures as seen so they're filtered from
+        // future queries.
+        if let Some(m) = n.fields.get("message") {
+            let c = canonical_line(m);
+            if !c.is_empty() {
+                seen.insert(format!("M|{}", c));
+            }
+        }
+        if let Some(d) = filtered_detail.as_deref() {
+            for line in d.lines() {
+                let c = canonical_line(line);
+                if !c.is_empty() {
+                    seen.insert(format!("D|{}", c));
+                }
+            }
+        }
+
+        let mut new_fields = n.fields.clone();
+        if let Some(d) = filtered_detail {
+            if d.trim().is_empty() {
+                new_fields.remove("detail");
+            } else {
+                new_fields.insert("detail".to_string(), d);
+            }
+        }
+        kept.push(Notice { fields: new_fields });
+    }
+
+    kept
 }
 
 // ------------------------------------------------------------------

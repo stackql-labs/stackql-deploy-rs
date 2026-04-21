@@ -11,7 +11,7 @@ use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 
 use crate::core::errors::check_fatal_error;
 use crate::utils::pgwire::PgwireLite;
@@ -245,8 +245,8 @@ pub fn run_stackql_command(
                                     continue;
                                 } else {
                                     catch_error_and_exit(&format!(
-                                        "Error during stackql command execution:\n\n{}\n",
-                                        notice
+                                        "Error during stackql command execution:\n\n{}\n\nlast rendered query:\n\n{}\n",
+                                        notice, processed_command
                                     ));
                                 }
                             }
@@ -326,10 +326,16 @@ pub fn run_stackql_command(
 }
 
 /// Check if a notice/message indicates an error.
+///
+/// Patterns can appear either at the start of the notice message or inside
+/// the `DETAIL:` payload (stackql wraps provider errors as a generic "a
+/// notice level event has occurred" message with the real HTTP status in
+/// the detail), so match against the whole notice string.
 fn error_detected_in_notice(msg: &str) -> bool {
-    msg.starts_with("http response status code: 4")
-        || msg.starts_with("http response status code: 5")
+    msg.contains("http response status code: 4")
+        || msg.contains("http response status code: 5")
         || msg.starts_with("error:")
+        || msg.contains("\nDETAIL: error:")
         || msg.starts_with("disparity in fields to insert")
         || msg.starts_with("cannot find matching operation")
 }
@@ -496,6 +502,17 @@ pub fn perform_retries_with_fields(
         attempt += 1;
     }
 
+    // Pre-create exists checks run with retries == 1 as a "fast fail" where
+    // a negative result is the expected outcome (the resource does not yet
+    // exist and needs to be created). Only surface the query when the
+    // caller configured real retries — i.e. a statecheck, exports proxy,
+    // or post-deploy exists check where exhaustion signals a stack failure.
+    if retries > 1 {
+        warn!(
+            "retries exhausted for [{}], last rendered query:\n\n{}\n",
+            resource_name, query
+        );
+    }
     (false, None)
 }
 
@@ -729,6 +746,24 @@ pub fn has_returning_clause(query: &str) -> bool {
     query.to_uppercase().contains("RETURNING")
 }
 
+/// Remove a trailing `RETURNING ...` clause from a DML query.
+///
+/// Matches case-insensitively on the last `RETURNING` keyword occurrence and
+/// truncates from there, preserving any trailing `;`.
+pub fn strip_returning_clause(query: &str) -> String {
+    let upper = query.to_uppercase();
+    if let Some(idx) = upper.rfind("RETURNING") {
+        let trailing_semi = query.trim_end().ends_with(';');
+        let mut out = query[..idx].trim_end().to_string();
+        if trailing_semi {
+            out.push(';');
+        }
+        out
+    } else {
+        query.to_string()
+    }
+}
+
 /// Execute a DML command (INSERT / UPDATE / DELETE), optionally capturing
 /// the `RETURNING *` result as the first row.
 ///
@@ -771,8 +806,8 @@ pub fn run_stackql_dml_returning(
                                 break;
                             } else {
                                 catch_error_and_exit(&format!(
-                                    "Error during stackql DML execution:\n\n{}\n",
-                                    notice
+                                    "Error during stackql DML execution:\n\n{}\n\nlast rendered query:\n\n{}\n",
+                                    notice, command
                                 ));
                             }
                         }
