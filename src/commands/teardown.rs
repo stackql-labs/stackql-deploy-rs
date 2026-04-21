@@ -8,7 +8,7 @@
 use std::time::Instant;
 
 use clap::{ArgMatches, Command};
-use log::{debug, info};
+use log::{debug, info, warn};
 
 use crate::commands::base::CommandRunner;
 use crate::commands::common_args::{
@@ -16,6 +16,7 @@ use crate::commands::common_args::{
     FailureAction,
 };
 use crate::core::config::get_resource_type;
+use crate::core::utils::{has_returning_clause, strip_returning_clause};
 use crate::utils::connection::create_client;
 use crate::utils::display::{print_unicode_box, BorderColor};
 use crate::utils::server::{check_and_start_server, stop_local_server};
@@ -115,29 +116,52 @@ fn collect_exports(runner: &mut CommandRunner, show_queries: bool, dry_run: bool
                 // Run exists query first to capture this.* fields needed by
                 // exports (e.g. this.identifier).
                 if let Some(eq) = queries.get("exists") {
-                    let rendered =
-                        runner.render_query(&resource.name, "exists", &eq.template, &full_context);
-                    let (_exists, fields) = runner.check_if_resource_exists(
-                        resource,
-                        &rendered,
-                        eq.options.retries,
-                        eq.options.retry_delay,
-                        dry_run,
-                        show_queries,
-                        false,
-                    );
-                    if let Some(ref f) = fields {
-                        for (k, v) in f {
-                            full_context.insert(format!("{}.{}", resource.name, k), v.clone());
+                    if let Some(rendered) = runner.try_render_query(
+                        &resource.name,
+                        "exists",
+                        &eq.template,
+                        &full_context,
+                    ) {
+                        let (_exists, fields) = runner.check_if_resource_exists(
+                            resource,
+                            &rendered,
+                            eq.options.retries,
+                            eq.options.retry_delay,
+                            dry_run,
+                            show_queries,
+                            false,
+                        );
+                        if let Some(ref f) = fields {
+                            for (k, v) in f {
+                                full_context
+                                    .insert(format!("{}.{}", resource.name, k), v.clone());
+                            }
                         }
+                    } else {
+                        info!(
+                            "[{}] exists query has unresolved variables, assuming resource does not exist",
+                            resource.name
+                        );
                     }
                 }
                 if let Some(eq) = queries.get("exports") {
-                    let rendered =
-                        runner.render_query(&resource.name, "exports", &eq.template, &full_context);
-                    // During teardown use minimal retries - the resource may
-                    // already be partially deleted.
-                    (Some(rendered), 1u32, 0u32)
+                    match runner.try_render_query(
+                        &resource.name,
+                        "exports",
+                        &eq.template,
+                        &full_context,
+                    ) {
+                        // During teardown use minimal retries - the resource may
+                        // already be partially deleted.
+                        Some(rendered) => (Some(rendered), 1u32, 0u32),
+                        None => {
+                            info!(
+                                "[{}] exports query has unresolved variables, skipping exports collection",
+                                resource.name
+                            );
+                            (None, 1u32, 0u32)
+                        }
+                    }
                 } else {
                     (None, 1u32, 0u32)
                 }
@@ -227,9 +251,17 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
         let (exists_query_str, exists_retries, exists_retry_delay) = if let Some(eq) =
             resource_queries.get("exists")
         {
-            let rendered =
-                runner.render_query(&resource.name, "exists", &eq.template, &full_context);
-            (rendered, eq.options.retries, eq.options.retry_delay)
+            if let Some(rendered) =
+                runner.try_render_query(&resource.name, "exists", &eq.template, &full_context)
+            {
+                (rendered, eq.options.retries, eq.options.retry_delay)
+            } else {
+                info!(
+                    "[{}] exists query has unresolved variables, assuming resource does not exist, skipping...",
+                    resource.name
+                );
+                continue;
+            }
         } else if let Some(sq) = resource_queries.get("statecheck") {
             info!(
                 "exists query not defined for [{}], trying statecheck query as exists query.",
@@ -290,15 +322,52 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
             exists
         };
 
-        // Render the delete query now (after exists fields are available).
-        let dq = resource_queries.get("delete").unwrap();
-        let delete_query =
-            runner.render_query(&resource.name, "delete", &dq.template, &full_context);
-        let delete_retries = dq.options.retries;
-        let delete_retry_delay = dq.options.retry_delay;
-
         // Delete
         if resource_exists {
+            // Render the delete query now (after exists fields are available).
+            let dq = resource_queries.get("delete").unwrap();
+            let rendered_delete = match runner.try_render_query(
+                &resource.name,
+                "delete",
+                &dq.template,
+                &full_context,
+            ) {
+                Some(rendered) => rendered,
+                None => {
+                    info!(
+                        "[{}] delete query has unresolved variables, assuming resource does not exist, skipping...",
+                        resource.name
+                    );
+                    continue;
+                }
+            };
+            let delete_retries = dq.options.retries;
+            let delete_retry_delay = dq.options.retry_delay;
+
+            // Only keep a RETURNING clause when return_vals.delete is configured
+            // for this resource. Otherwise strip it — teardown has no use for
+            // return values, and some providers reject RETURNING * on DELETE.
+            let delete_return_mappings = resource.get_return_val_mappings("delete");
+            let delete_query = if delete_return_mappings.is_empty() {
+                if has_returning_clause(&rendered_delete) {
+                    debug!(
+                        "[{}] stripping RETURNING clause from delete query (no return_vals.delete configured)",
+                        resource.name
+                    );
+                    strip_returning_clause(&rendered_delete)
+                } else {
+                    rendered_delete
+                }
+            } else if !has_returning_clause(&rendered_delete) {
+                warn!(
+                    "return_vals.delete specified for [{}] but delete query has no RETURNING clause; capture will be skipped",
+                    resource.name
+                );
+                rendered_delete
+            } else {
+                rendered_delete
+            };
+
             let (returning_row, delete_confirmed) = runner.delete_and_confirm(
                 resource,
                 &delete_query,
@@ -312,7 +381,39 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
 
             // Capture RETURNING * result.
             if let Some(ref row) = returning_row {
+                debug!("RETURNING payload for [{}]: {:?}", resource.name, row);
                 runner.store_callback_data(&resource.name, row);
+
+                // Apply return_vals.delete mappings from manifest.
+                if !delete_return_mappings.is_empty() {
+                    for (src, tgt) in &delete_return_mappings {
+                        if let Some(val) = row.get(src.as_str()) {
+                            if !val.is_empty() && val != "null" {
+                                info!(
+                                    "RETURNING [{}] for [{}] captured as [this.{}] = [{}]",
+                                    src, resource.name, tgt, val
+                                );
+                                full_context
+                                    .insert(format!("{}.{}", resource.name, tgt), val.clone());
+                            } else {
+                                warn!(
+                                    "return_vals.delete for [{}]: field [{}] in RETURNING result is null or empty",
+                                    resource.name, src
+                                );
+                            }
+                        } else {
+                            warn!(
+                                "return_vals.delete for [{}]: expected field [{}] not found in RETURNING result",
+                                resource.name, src
+                            );
+                        }
+                    }
+                }
+            } else if !delete_return_mappings.is_empty() {
+                warn!(
+                    "return_vals.delete specified for [{}] but no RETURNING data received",
+                    resource.name
+                );
             }
 
             // Run callback:delete block if present.

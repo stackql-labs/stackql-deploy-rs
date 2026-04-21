@@ -75,7 +75,7 @@ pub const STACKQL_BINARY_NAME: &str = "stackql";
 pub const STACKQL_RELEASE_BASE_URL: &str = "https://releases.stackql.io/stackql/latest";
 
 /// Commands exempt from binary check
-pub const EXEMPT_COMMANDS: [&str; 1] = ["init"];
+pub const EXEMPT_COMMANDS: [&str; 2] = ["init", "upgrade"];
 
 /// The base URL for GitHub template repository
 pub const GITHUB_TEMPLATE_BASE: &str =
