@@ -4,4 +4,4 @@ rm -rf stackql-aws-cloud-shell.sh
 rm -rf stackql-azure-cloud-shell.sh
 rm -rf stackql-google-cloud-shell.sh
 rm -rf stackql-databricks-shell.sh
-curl -L https://get-stackql-deploy.io | tar xzf -
+curl -fsSL https://get-stackql-deploy.io/install.sh | sh
