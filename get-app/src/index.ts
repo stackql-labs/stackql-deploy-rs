@@ -54,21 +54,23 @@ chmod +x stackql-deploy
 echo "Installed ./stackql-deploy ($os/$arch). Run it with ./stackql-deploy or move it onto your PATH."
 `;
 
-Deno.serve((req: Request) => {
-  const url = new URL(req.url);
+export default {
+  fetch(req: Request): Response {
+    const url = new URL(req.url);
 
-  // Dedicated installer endpoint for curl / wget (OS + arch detected client-side).
-  if (url.pathname === "/install.sh" || url.pathname === "/install") {
-    return new Response(INSTALL_SCRIPT, {
-      headers: { "content-type": "text/x-shellscript; charset=utf-8" },
-    });
-  }
+    // Dedicated installer endpoint for curl / wget (OS + arch detected client-side).
+    if (url.pathname === "/install.sh" || url.pathname === "/install") {
+      return new Response(INSTALL_SCRIPT, {
+        headers: { "content-type": "text/x-shellscript; charset=utf-8" },
+      });
+    }
 
-  if (url.pathname !== "/") {
-    return Response.redirect("https://stackql-deploy.io", 301);
-  }
+    if (url.pathname !== "/") {
+      return Response.redirect("https://stackql-deploy.io", 301);
+    }
 
-  const ua = req.headers.get("user-agent") ?? "";
-  const asset = getAssetName(ua);
-  return Response.redirect(`${RELEASE_BASE}/${asset}`, 302);
-});
+    const ua = req.headers.get("user-agent") ?? "";
+    const asset = getAssetName(ua);
+    return Response.redirect(`${RELEASE_BASE}/${asset}`, 302);
+  },
+} satisfies ExportedHandler;
