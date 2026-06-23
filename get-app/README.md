@@ -71,12 +71,23 @@ Worker instead of Deno Deploy.
    Confirm the build output reports the route
    `get-stackql-deploy.io (custom domain)`.
 
-2. In the Cloudflare dashboard for the `get-stackql-deploy.io` zone, check DNS:
-   - The previous setup pointed the apex at Deno Deploy (a `CNAME` to
-     `<project>.deno.dev`, or `A`/`AAAA` records). Wrangler's custom-domain route
-     adds its own managed record for the Worker. If a stale Deno record remains
-     and blocks the custom domain from attaching, remove the old Deno
-     `CNAME`/`A`/`AAAA` record for the apex, then re-run `npm run deploy`.
+2. Resolve the apex DNS conflict. On the first deploy the Worker script uploads
+   fine but the custom-domain trigger fails with a `409 Conflict` on
+   `.../domains/records` and the output reads `No targets deployed` - because the
+   apex still holds the old Deno Deploy record. To clear it:
+   - Cloudflare dashboard -> `get-stackql-deploy.io` zone -> DNS -> Records.
+   - Delete the old Deno record on the apex (name `get-stackql-deploy.io` / `@`) -
+     a `CNAME` to `<project>.deno.dev`, or `A`/`AAAA` records. Note it first if you
+     want a rollback path.
+   - Re-run `npm run deploy`. Wrangler now creates its own managed proxied record
+     and attaches the custom domain; the output should report
+     `get-stackql-deploy.io (custom domain)`.
+
+   Deleting the apex record briefly takes the hostname offline until the redeploy
+   attaches the Worker (seconds on Cloudflare). To avoid any gap, instead use
+   Workers & Pages -> get-stackql-deploy -> Settings -> Domains & Routes -> Add ->
+   Custom Domain -> `get-stackql-deploy.io`, which prompts to override the existing
+   record in a single step.
 
 3. Verify the live site once DNS propagates (usually seconds on Cloudflare):
 
