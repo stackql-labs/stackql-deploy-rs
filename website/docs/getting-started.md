@@ -28,13 +28,18 @@ The install script detects your OS and architecture and downloads the matching r
 curl -fsSL https://get-stackql-deploy.io/install.sh | sh
 ```
 
-Then move it onto your PATH:
+Test the install:
 
 ```bash
+# test from the current dir
+./stackql-deploy info
+# OPTIONAL: move into your PATH
 sudo mv stackql-deploy /usr/local/bin/
+stackql-deploy info
 ```
 
-Or download a specific platform build:
+<details>
+<summary>Download a specific platform build</summary>
 
 **macOS Universal (Apple Silicon + Intel):**
 
@@ -57,10 +62,10 @@ curl -L https://github.com/stackql/stackql-deploy-rs/releases/latest/download/st
 sudo mv stackql-deploy /usr/local/bin/
 ```
 
+</details>
+
 </TabItem>
 <TabItem value="windows" label="Windows">
-
-**PowerShell:**
 
 The install script downloads the latest release and extracts `stackql-deploy.exe` into the current directory:
 
@@ -68,13 +73,20 @@ The install script downloads the latest release and extracts `stackql-deploy.exe
 irm https://get-stackql-deploy.io/install.ps1 | iex
 ```
 
-Then move it onto your PATH:
+Test the install:
 
 ```powershell
+# test from the current dir
+.\stackql-deploy.exe info
+# OPTIONAL: move onto your PATH
 Move-Item stackql-deploy.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\"
+stackql-deploy info
 ```
 
-Or do it manually:
+<details>
+<summary>Install manually, or via WSL / Git Bash</summary>
+
+**Manual download (PowerShell):**
 
 ```powershell
 Invoke-WebRequest https://get-stackql-deploy.io -OutFile stackql-deploy.zip
@@ -89,6 +101,8 @@ Remove-Item stackql-deploy.zip
 curl -L -o stackql-deploy.zip https://github.com/stackql/stackql-deploy-rs/releases/latest/download/stackql-deploy-windows-x86_64.zip
 unzip stackql-deploy.zip
 ```
+
+</details>
 
 </TabItem>
 <TabItem value="github-releases" label="GitHub Releases">
