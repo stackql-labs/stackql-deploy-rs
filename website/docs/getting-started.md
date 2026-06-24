@@ -57,6 +57,20 @@ sudo mv stackql-deploy /usr/local/bin/
 
 **PowerShell:**
 
+The install script downloads the latest release and extracts `stackql-deploy.exe` into the current directory:
+
+```powershell
+irm https://get-stackql-deploy.io/install.ps1 | iex
+```
+
+Then move it onto your PATH:
+
+```powershell
+Move-Item stackql-deploy.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\"
+```
+
+Or do it manually:
+
 ```powershell
 Invoke-WebRequest https://get-stackql-deploy.io -OutFile stackql-deploy.zip
 Expand-Archive stackql-deploy.zip -DestinationPath .
