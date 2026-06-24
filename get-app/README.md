@@ -10,13 +10,32 @@ Behaviour (unchanged from the previous Deno Deploy app):
   asset (`windows-x86_64.zip`, `macos-universal.tar.gz`, or
   `linux-x86_64.tar.gz`). Keeps the
   `curl -L https://get-stackql-deploy.io | tar xzf -` one-liner working.
-- `GET /install.sh` (and `/install`) - returns a POSIX `sh` installer that runs
-  `uname` client-side to pick the right OS + arch asset. This is what CLI users
-  (curl/wget) hit, since their User-Agent carries no OS.
-- `GET /install.ps1` - returns a PowerShell installer that downloads and expands
-  the Windows zip into the current directory. Run it with
-  `irm https://get-stackql-deploy.io/install.ps1 | iex`.
+- `GET /install` - universal installer. Detects the calling shell from the
+  User-Agent and serves the matching script: the POSIX `sh` installer for
+  curl/wget, or the PowerShell installer for `irm`/`iwr`. Use it as
+  `curl -fsSL https://get-stackql-deploy.io/install | sh` (Linux/macOS) or
+  `irm https://get-stackql-deploy.io/install | iex` (Windows).
+- `GET /install.sh` - always the POSIX `sh` installer. Runs `uname` client-side
+  to pick the right OS + arch asset.
+- `GET /install.ps1` - always the PowerShell installer. Downloads and expands the
+  Windows zip into the current directory.
 - Any other path - `301`-redirects to `https://stackql-deploy.io`.
+
+### Wrong-shell guards
+
+The installers give friendly guidance instead of cryptic interpreter errors when
+run in the wrong shell:
+
+- Fetch `/install.sh` with PowerShell -> served a short PowerShell message
+  pointing at `irm .../install.ps1 | iex`.
+- Fetch `/install.ps1` with curl/wget -> served a short `sh` message pointing at
+  `curl -fsSL .../install.sh | sh`.
+- `install.sh` run in a POSIX shell on Windows (Git Bash/MSYS - `uname` reports
+  `MINGW*`/`MSYS*`/`CYGWIN*`) -> message pointing at the PowerShell command.
+- `install.ps1` run under PowerShell on macOS/Linux (`$PSVersionTable.Platform`
+  is `Unix`) -> message pointing at the `sh` command.
+- Unsupported CPU architectures get a "no prebuilt binary for your CPU" message
+  with a link to the releases page, not "unsupported".
 
 ## Develop
 
@@ -28,8 +47,10 @@ npm run dev        # wrangler dev - serves on http://localhost:8787
 Test locally:
 
 ```sh
-curl -A "curl/8.4.0" http://localhost:8787/install.sh
-curl http://localhost:8787/install.ps1
+curl -A "curl/8.4.0" http://localhost:8787/install            # -> sh installer
+curl -A "WindowsPowerShell/5.1" http://localhost:8787/install  # -> PowerShell installer
+curl -A "WindowsPowerShell/5.1" http://localhost:8787/install.sh   # -> "use install.ps1" guide
+curl -A "curl/8.4.0" http://localhost:8787/install.ps1            # -> "use install.sh" guide
 curl -sI -A "Mozilla/5.0 (Macintosh)" http://localhost:8787/   # -> 302 to macos asset
 curl -sI -A "curl/8.4.0" http://localhost:8787/                # -> 302 to linux asset
 ```
