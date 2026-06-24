@@ -12,6 +12,12 @@ unlisted: false
 import File from '/src/components/File';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import { FaApple, FaWindows, FaGithub, FaRust } from 'react-icons/fa';
+import { FcLinux } from 'react-icons/fc';
+
+export const tabLabel = (icon, text) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4em' }}>{icon}{text}</span>
+);
 
 `stackql-deploy` is a model driven, declarative framework for provisioning, de-provisioning and testing cloud resources.  Heard enough and ready to get started? Jump to a [__Quick Start__](#quick-start).
 
@@ -20,16 +26,26 @@ import TabItem from '@theme/TabItem';
 `stackql-deploy` is distributed as a standalone binary with no runtime dependencies required.  You can also download directly from your browser at [__get-stackql-deploy.io__](https://get-stackql-deploy.io).
 
 <Tabs>
-<TabItem value="linux-macos" label="Linux / macOS">
+<TabItem value="linux-macos" label={<span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4em' }}>{tabLabel(<FcLinux />, 'Linux')}/{tabLabel(<FaApple />, 'macOS')}</span>}>
 
-The canonical install URL detects your OS and redirects to the latest release asset automatically:
+The install script detects your OS and architecture and downloads the matching release binary into the current directory:
 
 ```bash
-curl -L https://get-stackql-deploy.io | tar xzf -
-sudo mv stackql-deploy /usr/local/bin/
+curl -fsSL https://get-stackql-deploy.io/install.sh | sh
 ```
 
-Or download a specific platform build:
+Test the install:
+
+```bash
+# test from the current dir
+./stackql-deploy info
+# OPTIONAL: move into your PATH
+sudo mv stackql-deploy /usr/local/bin/
+stackql-deploy info
+```
+
+<details>
+<summary>Download a specific platform build</summary>
 
 **macOS Universal (Apple Silicon + Intel):**
 
@@ -52,10 +68,10 @@ curl -L https://github.com/stackql/stackql-deploy-rs/releases/latest/download/st
 sudo mv stackql-deploy /usr/local/bin/
 ```
 
-</TabItem>
-<TabItem value="windows" label="Windows">
+</details>
 
-**PowerShell:**
+</TabItem>
+<TabItem value="windows" label={tabLabel(<FaWindows style={{ color: '#00A4EF' }} />, 'Windows')}>
 
 The install script downloads the latest release and extracts `stackql-deploy.exe` into the current directory:
 
@@ -63,13 +79,20 @@ The install script downloads the latest release and extracts `stackql-deploy.exe
 irm https://get-stackql-deploy.io/install.ps1 | iex
 ```
 
-Then move it onto your PATH:
+Test the install:
 
 ```powershell
+# test from the current dir
+.\stackql-deploy.exe info
+# OPTIONAL: move onto your PATH
 Move-Item stackql-deploy.exe "$env:LOCALAPPDATA\Microsoft\WindowsApps\"
+stackql-deploy info
 ```
 
-Or do it manually:
+<details>
+<summary>Install manually, or via WSL / Git Bash</summary>
+
+**Manual download (PowerShell):**
 
 ```powershell
 Invoke-WebRequest https://get-stackql-deploy.io -OutFile stackql-deploy.zip
@@ -85,8 +108,10 @@ curl -L -o stackql-deploy.zip https://github.com/stackql/stackql-deploy-rs/relea
 unzip stackql-deploy.zip
 ```
 
+</details>
+
 </TabItem>
-<TabItem value="github-releases" label="GitHub Releases">
+<TabItem value="github-releases" label={tabLabel(<FaGithub />, 'GitHub Releases')}>
 
 Pre-built binaries are attached to every release on the [__GitHub Releases__](https://github.com/stackql/stackql-deploy-rs/releases) page. A `SHA256SUMS` file is included for verification.
 
@@ -98,7 +123,7 @@ Pre-built binaries are attached to every release on the [__GitHub Releases__](ht
 | Windows x86_64 | `stackql-deploy-windows-x86_64.zip` |
 
 </TabItem>
-<TabItem value="github-actions" label="GitHub Actions">
+<TabItem value="github-actions" label={tabLabel(<FaGithub />, 'GitHub Actions')}>
 
 Use the [`stackql/setup-deploy`](https://github.com/marketplace/actions/stackql-deploy) action to install and run `stackql-deploy` in your CI/CD pipelines.  The action automatically downloads the latest binary for the runner's platform.
 
@@ -137,7 +162,7 @@ steps:
 See [__Deploying with GitHub Actions__](/github-actions) for the full reference.
 
 </TabItem>
-<TabItem value="cargo" label="Cargo (from source)">
+<TabItem value="cargo" label={tabLabel(<FaRust />, 'Cargo (from source)')}>
 
 If you have the Rust toolchain installed (via [rustup](https://rustup.rs/)):
 
