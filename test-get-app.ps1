@@ -1,6 +1,7 @@
 # Client-side smoke test for the stackql-deploy installer (Windows).
 # Confirms the origin is Cloudflare, exercises every installer path / shell-guard,
-# then runs the real installer and checks the binary downloads and runs.
+# then runs the real installer and checks the binary downloads and runs. Prints a
+# green PASS / red FAIL per check and a final colored summary.
 # Works on Windows PowerShell 5.1 and PowerShell 7+.
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +13,11 @@ $InstallUrl = "$Base/install.ps1"
 # User-Agents the worker routes on: PowerShell vs a POSIX download tool.
 $UaPs = 'Mozilla/5.0 (Windows NT 10.0) WindowsPowerShell/5.1'
 $UaCurl = 'curl/8.4.0'
+
+$script:Failures = 0
+
+function Pass { param([string]$Name) Write-Host "  PASS " -ForegroundColor Green -NoNewline; Write-Host $Name }
+function Fail { param([string]$Name) Write-Host "  FAIL " -ForegroundColor Red -NoNewline; Write-Host $Name; $script:Failures++ }
 
 foreach ($f in @('stackql-deploy', 'stackql', 'stackql-deploy.exe', 'stackql-deploy.zip')) {
   if (Test-Path $f) { Remove-Item $f -Force }
@@ -50,28 +56,23 @@ function Get-Resp {
 
 function Assert-Body {
   param([string]$Name, [string]$Url, [string]$Ua, [string]$Expect)
-  $resp = Get-Resp -Url $Url -Ua $Ua
+  try { $resp = Get-Resp -Url $Url -Ua $Ua } catch { Fail "$Name (request failed)"; return }
   if ($resp.Body -like "*$Expect*") {
-    Write-Host "  ok: $Name"
+    Pass $Name
   } else {
     $first = ($resp.Body -split "`n" | Select-Object -First 1)
-    Write-Host "FAIL: $Name"
-    Write-Host "      expected body to contain: $Expect"
-    Write-Host "      got first line: $first"
-    exit 1
+    Fail "$Name (expected '$Expect', got '$first')"
   }
 }
 
 function Assert-Location {
   param([string]$Name, [string]$Url, [string]$Ua, [string]$Expect)
-  $resp = Get-Resp -Url $Url -Ua $Ua
+  try { $resp = Get-Resp -Url $Url -Ua $Ua } catch { Fail "$Name (request failed)"; return }
   if ($resp.Location -like "*$Expect*") {
-    Write-Host "  ok: $Name -> $($resp.Location)"
+    Pass "$Name -> $($resp.Location)"
   } else {
-    Write-Host "FAIL: $Name"
-    Write-Host "      expected Location containing: $Expect"
-    if ($resp.Location) { Write-Host "      got: $($resp.Location)" } else { Write-Host "      got: <none>" }
-    exit 1
+    $got = if ($resp.Location) { $resp.Location } else { '<none>' }
+    Fail "$Name (expected Location '$Expect', got '$got')"
   }
 }
 
@@ -86,13 +87,12 @@ function Write-Box {
 Write-Box "Installing StackQL Deploy for Windows"
 
 Write-Host "Origin check:"
-$origin = Get-Resp -Url $InstallUrl -Ua $UaPs
-if ($origin.Server) { Write-Host "  server: $($origin.Server)" } else { Write-Host "  server: <none>" }
-if ($origin.Server -like '*cloudflare*') {
-  Write-Host "  ok: served by Cloudflare"
+try { $origin = Get-Resp -Url $InstallUrl -Ua $UaPs } catch { $origin = $null }
+if ($origin -and $origin.Server -like '*cloudflare*') {
+  Pass "served by Cloudflare (server: $($origin.Server))"
 } else {
-  Write-Host "FAIL: expected Cloudflare origin, got '$($origin.Server)'"
-  exit 1
+  $got = if ($origin) { $origin.Server } else { '<none>' }
+  Fail "expected Cloudflare origin, got '$got'"
 }
 Write-Host ""
 
@@ -116,26 +116,43 @@ Assert-Location "/some/other/path"  "$Base/some/other/path" $UaCurl             
 Write-Host ""
 
 Write-Host "Running installer:"
-Invoke-RestMethod $InstallUrl | Invoke-Expression
-
-if (-not (Test-Path $Bin)) {
-  Write-Host "FAIL: $Bin was not downloaded"
-  exit 1
-}
-Write-Host ""
-
-Write-Host "Binary:"
-$item = Get-Item $Bin
-Write-Host ("  {0}  {1:N0} bytes" -f $item.Name, $item.Length)
-Write-Host ""
-
-Write-Host "Execution check:"
 try {
-  & ".\$Bin" --version
-  Write-Host ""
-  Write-Host "PASS: runnable $Bin for Windows/$env:PROCESSOR_ARCHITECTURE"
+  Invoke-RestMethod $InstallUrl | Invoke-Expression
 } catch {
-  Write-Host ""
-  Write-Host "FAIL: $Bin did not run on this platform"
-  exit 1
+  Fail "installer raised an error: $($_.Exception.Message)"
 }
+if (Test-Path $Bin) {
+  Pass "installer downloaded $Bin"
+} else {
+  Fail "installer did not produce $Bin"
+}
+Write-Host ""
+
+if (Test-Path $Bin) {
+  Write-Host "Binary:"
+  $item = Get-Item $Bin
+  Write-Host ("  {0}  {1:N0} bytes" -f $item.Name, $item.Length)
+  Write-Host ""
+
+  Write-Host "Execution check:"
+  try {
+    & ".\$Bin" --version
+    Pass "runnable $Bin for Windows/$env:PROCESSOR_ARCHITECTURE"
+  } catch {
+    Fail "$Bin did not run on this platform"
+  }
+  Write-Host ""
+}
+
+# Final summary.
+if ($script:Failures -eq 0) {
+  $color = 'Green'; $text = "  PASS - all checks passed  "
+} else {
+  $color = 'Red'; $text = "  FAIL - $($script:Failures) check(s) failed  "
+}
+$line = '+' + ('-' * $text.Length) + '+'
+Write-Host $line -ForegroundColor $color
+Write-Host "|$text|" -ForegroundColor $color
+Write-Host $line -ForegroundColor $color
+
+if ($script:Failures -ne 0) { exit 1 }

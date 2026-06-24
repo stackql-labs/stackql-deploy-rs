@@ -2,9 +2,10 @@
 # Client-side smoke test for the stackql-deploy installer (mac/linux).
 # Confirms the origin is Cloudflare, exercises every installer path / shell-guard,
 # then runs the real installer and checks the binary is the right platform build,
-# executable, and runnable.
+# executable, and runnable. Prints a green PASS / red FAIL per check and a final
+# colored summary.
 
-set -eu
+set -u
 
 BIN=stackql-deploy
 BASE=https://get-stackql-deploy.io
@@ -13,6 +14,19 @@ INSTALL_URL="$BASE/install.sh"
 # User-Agents the worker routes on: a POSIX download tool vs PowerShell.
 UA_CURL="curl/8.4.0"
 UA_PS="Mozilla/5.0 (Windows NT 10.0) WindowsPowerShell/5.1"
+
+# Colors, only when stdout is a terminal (keeps piped/redirected output clean).
+if [ -t 1 ]; then
+  GREEN=$(printf '\033[32m'); RED=$(printf '\033[31m')
+  BOLD=$(printf '\033[1m'); RESET=$(printf '\033[0m')
+else
+  GREEN=''; RED=''; BOLD=''; RESET=''
+fi
+
+FAILURES=0
+
+pass() { printf '  %s%sPASS%s %s\n' "$BOLD" "$GREEN" "$RESET" "$1"; }
+fail() { printf '  %s%sFAIL%s %s\n' "$BOLD" "$RED" "$RESET" "$1"; FAILURES=$((FAILURES + 1)); }
 
 rm -f stackql-deploy
 rm -f stackql
@@ -32,42 +46,32 @@ print_box() {
 # Fetch a body with a given User-Agent and assert it contains a substring.
 check_body() {
   name="$1"; url="$2"; ua="$3"; expect="$4"
-  body=$(curl -fsSL -A "$ua" "$url")
+  body=$(curl -fsSL -A "$ua" "$url" 2>/dev/null) || { fail "$name (request failed)"; return; }
   case "$body" in
-    *"$expect"*) echo "  ok: $name" ;;
-    *)
-      echo "FAIL: $name"
-      echo "      expected body to contain: $expect"
-      echo "      got first line: $(printf '%s' "$body" | sed -n '1p')"
-      exit 1
-      ;;
+    *"$expect"*) pass "$name" ;;
+    *) fail "$name (expected '$expect', got '$(printf '%s' "$body" | sed -n '1p')')" ;;
   esac
 }
 
 # Assert a path redirects (no -L) to a Location containing a substring.
 check_redirect() {
   name="$1"; url="$2"; ua="$3"; expect="$4"
-  loc=$(curl -fsS -o /dev/null -D - -A "$ua" "$url" \
+  loc=$(curl -fsS -o /dev/null -D - -A "$ua" "$url" 2>/dev/null \
     | awk -F': ' 'tolower($1)=="location"{print $2}' | tr -d '\r')
   case "$loc" in
-    *"$expect"*) echo "  ok: $name -> $loc" ;;
-    *)
-      echo "FAIL: $name"
-      echo "      expected Location containing: $expect"
-      echo "      got: ${loc:-<none>}"
-      exit 1
-      ;;
+    *"$expect"*) pass "$name -> $loc" ;;
+    *) fail "$name (expected Location '$expect', got '${loc:-<none>}')" ;;
   esac
 }
 
 print_box "Installing StackQL Deploy for MacOS/Linux"
 
 echo "Origin check:"
-server=$(curl -fsSL -D - -o /dev/null "$INSTALL_URL" | awk -F': ' 'tolower($1)=="server"{print $2}' | tr -d '\r')
-echo "  server: ${server:-<none>}"
+server=$(curl -fsSL -D - -o /dev/null "$INSTALL_URL" 2>/dev/null \
+  | awk -F': ' 'tolower($1)=="server"{print $2}' | tr -d '\r')
 case "$(printf '%s' "$server" | tr 'A-Z' 'a-z')" in
-  *cloudflare*) echo "  ok: served by Cloudflare" ;;
-  *) echo "FAIL: expected Cloudflare origin, got '${server:-<none>}'"; exit 1 ;;
+  *cloudflare*) pass "served by Cloudflare (server: ${server:-<none>})" ;;
+  *) fail "expected Cloudflare origin, got '${server:-<none>}'" ;;
 esac
 echo
 
@@ -92,35 +96,49 @@ echo
 
 echo "Running installer:"
 curl -fsSL "$INSTALL_URL" | sh
-
-if [ ! -e "$BIN" ]; then
-  echo "FAIL: $BIN was not downloaded"
-  exit 1
-fi
-echo
-
-echo "Binary:"
-if command -v file >/dev/null 2>&1; then
-  file "$BIN"
+if [ -e "$BIN" ]; then
+  pass "installer downloaded $BIN"
 else
-  echo "  (file not available, skipping arch detail)"
+  fail "installer did not produce $BIN (expected on Windows/Git Bash; run on mac/linux for the full path)"
 fi
 echo
 
-echo "Permissions:"
-ls -l "$BIN"
-if [ ! -x "$BIN" ]; then
-  echo "FAIL: $BIN is not executable"
-  exit 1
-fi
-echo
-
-echo "Execution check:"
-if ./"$BIN" --version; then
+if [ -e "$BIN" ]; then
+  echo "Binary:"
+  if command -v file >/dev/null 2>&1; then
+    file "$BIN"
+  else
+    echo "  (file not available, skipping arch detail)"
+  fi
   echo
-  echo "PASS: runnable $BIN for $(uname -s)/$(uname -m)"
+
+  echo "Permissions:"
+  ls -l "$BIN"
+  if [ -x "$BIN" ]; then
+    pass "$BIN is executable"
+  else
+    fail "$BIN is not executable"
+  fi
+  echo
+
+  echo "Execution check:"
+  if ./"$BIN" --version; then
+    pass "runnable $BIN for $(uname -s)/$(uname -m)"
+  else
+    fail "$BIN did not run (wrong binary or exec format error)"
+  fi
+  echo
+fi
+
+# Final summary.
+if [ "$FAILURES" -eq 0 ]; then
+  color=$GREEN; text="  PASS - all checks passed  "
 else
-  echo
-  echo "FAIL: $BIN did not run on this platform (wrong binary or exec format error)"
-  exit 1
+  color=$RED; text="  FAIL - $FAILURES check(s) failed  "
 fi
+line=$(printf '%*s' "${#text}" '' | tr ' ' '-')
+printf '%s%s+%s+%s\n' "$BOLD" "$color" "$line" "$RESET"
+printf '%s%s|%s|%s\n' "$BOLD" "$color" "$text" "$RESET"
+printf '%s%s+%s+%s\n' "$BOLD" "$color" "$line" "$RESET"
+
+[ "$FAILURES" -eq 0 ]
