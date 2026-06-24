@@ -13,6 +13,9 @@ Behaviour (unchanged from the previous Deno Deploy app):
 - `GET /install.sh` (and `/install`) - returns a POSIX `sh` installer that runs
   `uname` client-side to pick the right OS + arch asset. This is what CLI users
   (curl/wget) hit, since their User-Agent carries no OS.
+- `GET /install.ps1` - returns a PowerShell installer that downloads and expands
+  the Windows zip into the current directory. Run it with
+  `irm https://get-stackql-deploy.io/install.ps1 | iex`.
 - Any other path - `301`-redirects to `https://stackql-deploy.io`.
 
 ## Develop
@@ -26,6 +29,7 @@ Test locally:
 
 ```sh
 curl -A "curl/8.4.0" http://localhost:8787/install.sh
+curl http://localhost:8787/install.ps1
 curl -sI -A "Mozilla/5.0 (Macintosh)" http://localhost:8787/   # -> 302 to macos asset
 curl -sI -A "curl/8.4.0" http://localhost:8787/                # -> 302 to linux asset
 ```

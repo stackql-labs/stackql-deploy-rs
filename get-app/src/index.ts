@@ -54,6 +54,33 @@ chmod +x stackql-deploy
 echo "Installed ./stackql-deploy ($os/$arch). Run it with ./stackql-deploy or move it onto your PATH."
 `;
 
+// PowerShell equivalent of the installer for Windows callers, so the awkward
+// Invoke-WebRequest + Expand-Archive dance collapses to:
+//   irm https://get-stackql-deploy.io/install.ps1 | iex
+// Windows ships a single x86_64 build; ARM64 Windows runs it under emulation, so
+// both architectures resolve to the same asset.
+const INSTALL_PS1 = `#Requires -Version 5
+# stackql-deploy installer - https://get-stackql-deploy.io/install.ps1
+# Downloads the latest Windows release binary into the current directory.
+# Usage: irm https://get-stackql-deploy.io/install.ps1 | iex
+$ErrorActionPreference = 'Stop'
+
+$base = "${RELEASE_BASE}"
+$asset = 'stackql-deploy-windows-x86_64.zip'
+$arch = $env:PROCESSOR_ARCHITECTURE
+if ($arch -ne 'AMD64' -and $arch -ne 'ARM64') {
+  throw "stackql-deploy: unsupported Windows architecture: $arch"
+}
+
+$dest = (Get-Location).Path
+$zip = Join-Path $dest $asset
+Write-Host "Downloading $asset ..."
+Invoke-WebRequest -Uri "$base/$asset" -OutFile $zip
+Expand-Archive -Path $zip -DestinationPath $dest -Force
+Remove-Item $zip
+Write-Host "Installed .\\stackql-deploy.exe. Run it with .\\stackql-deploy.exe or move it onto your PATH."
+`;
+
 export default {
   fetch(req: Request): Response {
     const url = new URL(req.url);
@@ -62,6 +89,13 @@ export default {
     if (url.pathname === "/install.sh" || url.pathname === "/install") {
       return new Response(INSTALL_SCRIPT, {
         headers: { "content-type": "text/x-shellscript; charset=utf-8" },
+      });
+    }
+
+    // PowerShell installer for Windows: irm https://get-stackql-deploy.io/install.ps1 | iex
+    if (url.pathname === "/install.ps1") {
+      return new Response(INSTALL_PS1, {
+        headers: { "content-type": "text/plain; charset=utf-8" },
       });
     }
 
