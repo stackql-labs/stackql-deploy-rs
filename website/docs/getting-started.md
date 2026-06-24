@@ -22,10 +22,15 @@ import TabItem from '@theme/TabItem';
 <Tabs>
 <TabItem value="linux-macos" label="Linux / macOS">
 
-The canonical install URL detects your OS and redirects to the latest release asset automatically:
+The install script detects your OS and architecture and downloads the matching release binary into the current directory:
 
 ```bash
-curl -L https://get-stackql-deploy.io | tar xzf -
+curl -fsSL https://get-stackql-deploy.io/install.sh | sh
+```
+
+Then move it onto your PATH:
+
+```bash
 sudo mv stackql-deploy /usr/local/bin/
 ```
 
