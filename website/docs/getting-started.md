@@ -26,7 +26,7 @@ export const tabLabel = (icon, text) => (
 `stackql-deploy` is distributed as a standalone binary with no runtime dependencies required.  You can also download directly from your browser at [__get-stackql-deploy.io__](https://get-stackql-deploy.io).
 
 <Tabs>
-<TabItem value="linux-macos" label={tabLabel(<><FcLinux /><FaApple /></>, 'Linux / macOS')}>
+<TabItem value="linux-macos" label={<span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4em' }}>{tabLabel(<FcLinux />, 'Linux')}/{tabLabel(<FaApple />, 'macOS')}</span>}>
 
 The install script detects your OS and architecture and downloads the matching release binary into the current directory:
 
