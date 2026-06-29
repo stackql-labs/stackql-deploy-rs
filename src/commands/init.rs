@@ -159,7 +159,10 @@ fn validate_provider(provider: Option<&str>) -> String {
 
 /// Fetches template content from a given URL.
 fn fetch_template(url: &str) -> Result<String, String> {
-    let client = Client::new();
+    let client = Client::builder()
+        .user_agent(concat!("stackql-deploy/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let response = client
         .get(url)
         .send()

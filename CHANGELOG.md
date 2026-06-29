@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.8 (2026-06-29)
+
+### Features
+
+- Set a `stackql-deploy/{version}` User-Agent on the stackql binary download client (and the template-scaffolding client used by `init`).
+
 ## 2.0.7 (2026-04-19)
 
 ### Fixes
