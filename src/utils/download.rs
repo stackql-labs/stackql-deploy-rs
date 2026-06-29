@@ -83,6 +83,7 @@ pub fn download_binary() -> Result<PathBuf, AppError> {
     // Download the file with progress bar
     debug!("Downloading from {}", download_url);
     let client = Client::builder()
+        .user_agent(concat!("stackql-deploy/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| AppError::CommandFailed(format!("Failed to create HTTP client: {}", e)))?;
