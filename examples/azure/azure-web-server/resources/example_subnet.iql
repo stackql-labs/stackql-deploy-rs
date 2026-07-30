@@ -1,10 +1,10 @@
 /*+ createorupdate */
 INSERT INTO azure.network.subnets(
-   subnetName,
-   virtualNetworkName,
-   resourceGroupName, 
-   subscriptionId, 
-   data__properties
+   subnet_name,
+   virtual_network_name,
+   resource_group_name,
+   subscription_id,
+   properties
 )
 SELECT
    '{{ subnet_name }}',
@@ -15,24 +15,24 @@ SELECT
 
 /*+ statecheck, retries=5, retry_delay=5 */
 SELECT COUNT(*) as count FROM azure.network.subnets
-WHERE subscriptionId = '{{ subscription_id }}'
-AND resourceGroupName = '{{ resource_group_name }}'
-AND virtualNetworkName = '{{ vnet_name }}'
-AND subnetName = '{{ subnet_name }}'
-AND JSON_EXTRACT(properties, '$.addressPrefix') = '{{ subnet_cidr }}'
+WHERE subscription_id = '{{ subscription_id }}'
+AND resource_group_name = '{{ resource_group_name }}'
+AND virtual_network_name = '{{ vnet_name }}'
+AND subnet_name = '{{ subnet_name }}'
+AND address_prefix = '{{ subnet_cidr }}'
 
 /*+ exports */
 SELECT '{{ subnet_name }}' as subnet_name,
 id as subnet_id
 FROM azure.network.subnets
-WHERE subscriptionId = '{{ subscription_id }}'
-AND resourceGroupName = '{{ resource_group_name }}'
-AND virtualNetworkName = '{{ vnet_name }}'
-AND subnetName = '{{ subnet_name }}'
+WHERE subscription_id = '{{ subscription_id }}'
+AND resource_group_name = '{{ resource_group_name }}'
+AND virtual_network_name = '{{ vnet_name }}'
+AND subnet_name = '{{ subnet_name }}'
 
 /*+ delete */
 DELETE FROM azure.network.subnets
-WHERE subscriptionId = '{{ subscription_id }}'
-AND resourceGroupName = '{{ resource_group_name }}'
-AND virtualNetworkName = '{{ vnet_name }}'
-AND subnetName = '{{ subnet_name }}'
+WHERE subscription_id = '{{ subscription_id }}'
+AND resource_group_name = '{{ resource_group_name }}'
+AND virtual_network_name = '{{ vnet_name }}'
+AND subnet_name = '{{ subnet_name }}'

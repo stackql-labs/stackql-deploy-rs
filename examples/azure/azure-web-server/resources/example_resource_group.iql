@@ -1,14 +1,14 @@
 /*+ exists */
-SELECT COUNT(*) as count FROM azure.resources.resource_groups
-WHERE subscriptionId = '{{ subscription_id }}'
-AND resourceGroupName = '{{ resource_group_name }}'
+SELECT COUNT(*) as count FROM azure.resource.resource_groups
+WHERE subscription_id = '{{ subscription_id }}'
+AND resource_group_name = '{{ resource_group_name }}'
 
 /*+ create */
-INSERT INTO azure.resources.resource_groups(
-   resourceGroupName,
-   subscriptionId,
-   data__location,
-   data__tags
+INSERT INTO azure.resource.resource_groups(
+   resource_group_name,
+   subscription_id,
+   location,
+   tags
 )
 SELECT
    '{{ resource_group_name }}',
@@ -17,15 +17,15 @@ SELECT
    '{{ global_tags }}'
 
 /*+ statecheck, retries=5, retry_delay=5 */
-SELECT COUNT(*) as count FROM azure.resources.resource_groups
-WHERE subscriptionId = '{{ subscription_id }}'
-AND resourceGroupName = '{{ resource_group_name }}'
+SELECT COUNT(*) as count FROM azure.resource.resource_groups
+WHERE subscription_id = '{{ subscription_id }}'
+AND resource_group_name = '{{ resource_group_name }}'
 AND location = '{{ location }}'
-AND JSON_EXTRACT(properties, '$.provisioningState') = 'Succeeded'
+AND provisioning_state = 'Succeeded'
 
 /*+ exports */
 SELECT '{{ resource_group_name }}' as resource_group_name
 
 /*+ delete */
-DELETE FROM azure.resources.resource_groups
-WHERE resourceGroupName = '{{ resource_group_name }}' AND subscriptionId = '{{ subscription_id }}'
+DELETE FROM azure.resource.resource_groups
+WHERE resource_group_name = '{{ resource_group_name }}' AND subscription_id = '{{ subscription_id }}'

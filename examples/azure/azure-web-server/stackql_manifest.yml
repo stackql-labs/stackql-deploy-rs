@@ -2,7 +2,7 @@ version: 1
 name: "azure-web-server"
 description: Provisions an Azure networking stack (resource group, VNet, subnet, NSG, public IP, NIC) with an Ubuntu VM running a web server.
 providers:
-  - azure::v24.10.00267
+  - azure::v26.07.00420
 globals:
   - name: subscription_id
     description: azure subscription id
