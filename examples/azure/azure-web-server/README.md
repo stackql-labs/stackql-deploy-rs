@@ -24,13 +24,13 @@ flowchart LR
 
 | # | Resource | Provider Resource | Description |
 |---|----------|-------------------|-------------|
-| 1 | `example_resource_group` | `azure.resources.resource_groups` | Resource group for all stack resources |
+| 1 | `example_resource_group` | `azure.resource.resource_groups` | Resource group for all stack resources |
 | 2 | `example_vnet` | `azure.network.virtual_networks` | Virtual network with environment-specific CIDR |
 | 3 | `example_subnet` | `azure.network.subnets` | Subnet within the VNet |
 | 4 | `example_public_ip` | `azure.network.public_ip_addresses` | Static public IP for the VM |
 | 5 | `example_nsg` | `azure.network.network_security_groups` | NSG allowing HTTP (8080) and SSH (22 from VNet) |
 | 6 | `example_nic` | `azure.network.network_interfaces` | NIC with subnet, public IP, and NSG |
-| 7 | `example_web_server` | `azure.compute.virtual_machines` | Ubuntu 18.04 VM (Standard_DS1_v2) |
+| 7 | `example_web_server` | `azure.compute.virtual_machines` | Ubuntu 24.04 VM (size set by `hardwareProfile` in the manifest) |
 | 8 | `example_vm_ext` | `azure.compute.virtual_machine_extensions` | Custom script extension to start a web server |
 
 ## Environment-Specific CIDR Blocks

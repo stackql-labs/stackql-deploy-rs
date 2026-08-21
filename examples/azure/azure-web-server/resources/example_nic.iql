@@ -1,11 +1,11 @@
 /*+ createorupdate */
-INSERT INTO azure.network.interfaces(
-   networkInterfaceName,
-   resourceGroupName,
-   subscriptionId,
-   data__location,
-   data__properties,
-   data__tags
+INSERT INTO azure.network.network_interfaces(
+   network_interface_name,
+   resource_group_name,
+   subscription_id,
+   location,
+   properties,
+   tags
 )
 SELECT
    '{{ nic_name }}',
@@ -16,20 +16,21 @@ SELECT
    '{{ global_tags }}';
 
 /*+ statecheck, retries=5, retry_delay=5 */
-SELECT COUNT(*) as count FROM azure.network.interfaces
-WHERE subscriptionId = '{{ subscription_id }}'
-AND resourceGroupName = '{{ resource_group_name }}'
-AND networkInterfaceName = '{{ nic_name }}';
+SELECT COUNT(*) as count FROM azure.network.network_interfaces
+WHERE subscription_id = '{{ subscription_id }}'
+AND resource_group_name = '{{ resource_group_name }}'
+AND network_interface_name = '{{ nic_name }}'
+AND provisioning_state = 'Succeeded'
 
 /*+ exports */
-SELECT id as network_interface_id 
-FROM azure.network.interfaces
-WHERE subscriptionId = '{{ subscription_id }}'
-AND resourceGroupName = '{{ resource_group_name }}'
-AND networkInterfaceName = '{{ nic_name }}';
+SELECT id as network_interface_id
+FROM azure.network.network_interfaces
+WHERE subscription_id = '{{ subscription_id }}'
+AND resource_group_name = '{{ resource_group_name }}'
+AND network_interface_name = '{{ nic_name }}'
 
 /*+ delete */
-DELETE FROM azure.network.interfaces
-WHERE subscriptionId = '{{ subscription_id }}'
-AND resourceGroupName = '{{ resource_group_name }}'
-AND networkInterfaceName = '{{ nic_name }}';
+DELETE FROM azure.network.network_interfaces
+WHERE subscription_id = '{{ subscription_id }}'
+AND resource_group_name = '{{ resource_group_name }}'
+AND network_interface_name = '{{ nic_name }}'
