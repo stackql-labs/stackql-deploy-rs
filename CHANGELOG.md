@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.9 (2026-08-21)
+
+### Fixes
+
+- Suppressed stray output from the stackql binary PATH lookup. The `which`/`where` check inherited the terminal's stdout, so the resolved binary path was printed once per lookup (four times during `info`). The check now captures the child process output and only inspects the exit status.
+
 ## 2.0.8 (2026-06-29)
 
 ### Features

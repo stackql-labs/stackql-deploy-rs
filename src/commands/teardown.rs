@@ -313,7 +313,7 @@ fn run_teardown(runner: &mut CommandRunner, dry_run: bool, show_queries: bool, _
             // the delete query can reference them.
             if let Some(ref f) = fields {
                 for (k, v) in f {
-                    full_context.insert(format!("{}.{}", &resource.name, k), v.clone());
+                    full_context.insert(format!("{}.{}", resource.name, k), v.clone());
                 }
             }
             exists

@@ -26,15 +26,19 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Check if the stackql binary exists in PATH
+///
+/// Uses `output()` rather than `status()` so the child's stdout/stderr are
+/// captured instead of inherited - otherwise `which`/`where` print the
+/// resolved path straight to the terminal on every lookup.
 pub fn binary_exists_in_path() -> bool {
     let binary_name = super::platform::get_binary_name();
-    let status = if super::platform::get_platform() == super::platform::Platform::Windows {
-        Command::new("where").arg(&binary_name).status()
+    let output = if super::platform::get_platform() == super::platform::Platform::Windows {
+        Command::new("where").arg(&binary_name).output()
     } else {
-        Command::new("which").arg(&binary_name).status()
+        Command::new("which").arg(&binary_name).output()
     };
 
-    status.map(|s| s.success()).unwrap_or(false)
+    output.map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Get the full path to the stackql binary
