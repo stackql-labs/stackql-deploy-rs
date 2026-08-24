@@ -10,7 +10,7 @@
 /// StackQL engine. If any pattern matches, the operation is aborted
 /// immediately rather than retried.
 ///
-/// Two categories:
+/// Three categories:
 ///
 /// 1. **Network errors** - The request never reached the API. Any result
 ///    from a query in this state is untrustworthy (e.g., an exists check
@@ -19,6 +19,11 @@
 /// 2. **HTTP status errors** - The request reached the API but the response
 ///    indicates an unrecoverable problem (auth failure, forbidden, etc.).
 ///    404 is explicitly excluded as it's normal for exists checks.
+///
+/// 3. **Planner/compiler errors** - The stackql engine could not plan the
+///    query (unknown column/symbol, no matching provider operation, SQL
+///    syntax error). These are deterministic: the same query will fail the
+///    same way on every attempt, so retrying only burns the retry budget.
 const FATAL_ERROR_PATTERNS: &[&str] = &[
     // Network-layer errors (Go net/http)
     "dial tcp:",
@@ -36,6 +41,11 @@ const FATAL_ERROR_PATTERNS: &[&str] = &[
     // HTTP status codes that are never retryable
     "http response status code: 401",
     "http response status code: 403",
+    // stackql planner/compiler errors - deterministic, never succeed on retry
+    "could not locate symbol",
+    "cannot find matching operation",
+    "disparity in fields to insert",
+    "syntax error at position",
 ];
 
 /// Patterns that indicate a non-fatal error, even if a fatal pattern
@@ -118,5 +128,29 @@ mod tests {
     fn test_normal_query_error_is_not_fatal() {
         let msg = r#"query returns error: no such column: foo"#;
         assert!(check_fatal_error(msg).is_none());
+    }
+
+    #[test]
+    fn test_could_not_locate_symbol_is_fatal() {
+        let msg = r#"Query execution failed: could not locate symbol DBInstanceStatus"#;
+        assert!(check_fatal_error(msg).is_some());
+    }
+
+    #[test]
+    fn test_cannot_find_matching_operation_is_fatal() {
+        let msg = r#"cannot find matching operation, searched: [insert update delete]"#;
+        assert!(check_fatal_error(msg).is_some());
+    }
+
+    #[test]
+    fn test_syntax_error_is_fatal() {
+        let msg = r#"Query execution failed: syntax error at position 42 near 'form'"#;
+        assert!(check_fatal_error(msg).is_some());
+    }
+
+    #[test]
+    fn test_disparity_in_fields_is_fatal() {
+        let msg = r#"disparity in fields to insert and supplied data"#;
+        assert!(check_fatal_error(msg).is_some());
     }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.1 (2026-08-24)
+
+### Fixes
+
+- StackQL planner/compiler errors (`could not locate symbol ...`, `cannot find matching operation ...`, `syntax error at position ...`, `disparity in fields to insert ...`) are now treated as fatal and abort the operation immediately. These errors are deterministic - the same query fails the same way on every attempt - but they were previously swallowed by the `exists`/`statecheck` retry loop and retried until the retry budget was exhausted.
+
 ## 2.1.0 (2026-08-24)
 
 ### Features
