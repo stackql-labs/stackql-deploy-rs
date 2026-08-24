@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.0 (2026-08-24)
+
+### Features
+
+- Added `protected: true` for global variables and resource properties. The rendered value of a protected global or prop is masked (`********`) in all log output - including rendered queries shown with `--dry-run` or `--show-queries`, `DEBUG` level logging, and `RETURNING *` response logging - while the real value is still sent to the provider. Log scrubbing is value-based and applied at the logger sink, so a protected value is masked wherever it surfaces.
+
+### Fixes
+
+- Resource-level `protected` export values are now masked everywhere in log output, not just in the `set variable` export log lines. Previously a protected export interpolated into a downstream resource's query appeared in cleartext under `--dry-run` or `--show-queries`.
+- The stack exports summary table now masks protected values in the terminal display. The `.stackql-deploy-exports` file and `--output-file` JSON retain real values.
+
 ## 2.0.9 (2026-08-21)
 
 ### Fixes
