@@ -1,0 +1,17 @@
+import File from '/src/components/File';
+import LeftAlignedTable from '@site/src/components/LeftAlignedTable';
+
+<LeftAlignedTable type="bool" required={false} />
+
+When set to `true` (defaults to `false`), the rendered value of the global variable is masked (shown as `********`) in all log output, including rendered queries shown using `--dry-run` or `--show-queries` and `DEBUG` level logging.  Use this for sensitive values sourced from external environment variables or secrets.  The actual value is still available to templates and sent to the provider in queries, masking applies to displayed output only.
+
+<File name='stackql_manifest.yml'>
+
+```yaml {4}
+globals:
+  - name: postgres_master_password
+    value: "{{ POSTGRES_MASTER_PASSWORD }}"
+    protected: true
+```
+
+</File>

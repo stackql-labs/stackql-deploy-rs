@@ -1,0 +1,23 @@
+import File from '@site/src/components/File';
+import LeftAlignedTable from '@site/src/components/LeftAlignedTable';
+
+<LeftAlignedTable type="bool" required={false} />
+
+When set to `true` (defaults to `false`), the rendered value of the property is masked (shown as `********`) in all log output, including rendered queries shown using `--dry-run` or `--show-queries` and `DEBUG` level logging.  Use this for sensitive property values such as passwords or API keys.  The actual value is still sent to the provider in queries, masking applies to displayed output only.
+
+<File name='stackql_manifest.yml'>
+
+```yaml {7,10}
+resources:
+  - name: operational_db
+    file: aws/rds_postgres.iql
+    props:
+      - name: master_username
+        value: "{{ postgres_master_username }}"
+        protected: true
+      - name: master_user_password
+        value: "{{ postgres_master_password }}"
+        protected: true
+```
+
+</File>

@@ -1271,6 +1271,8 @@ impl CommandRunner {
         );
         println!("{}", sep);
         for (name, val) in &rows {
+            // Mask protected values in the displayed table (files keep real values)
+            let val = crate::core::secrets::redact(val);
             let display_val = if val.len() > max_val_len {
                 format!("{}...", &val[..max_val_len - 3])
             } else {

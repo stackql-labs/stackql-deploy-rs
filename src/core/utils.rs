@@ -608,6 +608,12 @@ pub fn export_vars(
 ) {
     for (key, value) in export_data {
         let is_protected = protected_exports.contains(key);
+        if is_protected {
+            // Register for global log redaction so the value is also masked
+            // anywhere else it surfaces (e.g. interpolated into a downstream
+            // resource's query shown via --dry-run or --show-queries).
+            crate::core::secrets::register_secret(value);
+        }
         let display_value = if is_protected {
             "*".repeat(value.len())
         } else {
@@ -1140,6 +1146,32 @@ mod tests {
         assert_eq!(
             ctx.get("vault.secret_key").map(|s| s.as_str()),
             Some("super-secret"),
+        );
+    }
+
+    #[test]
+    fn test_export_vars_protected_values_registered_for_redaction() {
+        // Protected export values must be masked anywhere they later surface
+        // in log output (e.g. interpolated into a downstream query)
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        let mut data = HashMap::new();
+        data.insert(
+            "generated_password".to_string(),
+            "Utils-Exported-S3cret-1".to_string(),
+        );
+
+        export_vars(
+            &mut ctx,
+            "vault",
+            &data,
+            &["generated_password".to_string()],
+        );
+
+        let redacted = crate::core::secrets::redact("SELECT 'Utils-Exported-S3cret-1' AS password");
+        assert!(
+            !redacted.contains("Utils-Exported-S3cret-1"),
+            "protected export value leaked: {}",
+            redacted
         );
     }
 

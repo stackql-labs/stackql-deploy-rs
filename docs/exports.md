@@ -127,7 +127,30 @@ Sensitive values can be masked in log output by listing them under
 ```
 
 The actual value is still stored in the context and usable by templates;
-only the log messages are masked.
+only the log messages are masked. Protected export values are masked
+everywhere they appear in log output, including rendered queries shown
+using `--dry-run` or `--show-queries` and `DEBUG` level logging.
+
+## Protected inputs (globals and props)
+
+To mask sensitive input values (rather than exported values), set
+`protected: true` on a global variable or resource property:
+
+```yaml
+globals:
+  - name: postgres_master_password
+    value: "{{ POSTGRES_MASTER_PASSWORD }}"
+    protected: true
+resources:
+  - name: operational_db
+    props:
+      - name: master_user_password
+        value: "{{ postgres_master_password }}"
+        protected: true
+```
+
+The rendered value is masked (shown as `********`) in all log output; the
+real value is still sent to the provider in queries.
 
 ## Stack-level exports
 

@@ -69,6 +69,12 @@ the fields within the __`stackql_manifest.yml`__ file are described in further d
 
 ***
 
+### <span className="docFieldHeading">`global.protected`</span>
+
+<ManifestFields.GlobalProtected />
+
+***
+
 ### <span className="docFieldHeading">`resources`</span>
 
 <ManifestFields.Resources />
@@ -212,6 +218,12 @@ When `return_vals` successfully captures an identifier from `RETURNING *`, the f
 ### <span className="docFieldHeading">`resource.prop.merge`</span>
 
 <ManifestFields.ResourcePropMerge />
+
+***
+
+### <span className="docFieldHeading">`resource.prop.protected`</span>
+
+<ManifestFields.ResourcePropProtected />
 
 ***
 

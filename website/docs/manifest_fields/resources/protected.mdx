@@ -3,7 +3,7 @@ import LeftAlignedTable from '@site/src/components/LeftAlignedTable';
 
 <LeftAlignedTable type="string[]" required={false} />
 
-Protected variables from the `resource`, these variables are masked in the output logs.  Protected variables are a subset of `exports`
+Protected variables from the `resource`, these variables are masked in the output logs.  Protected variables are a subset of `exports`.  Protected export values are masked wherever they appear in log output, including rendered queries shown using `--dry-run` or `--show-queries` and `DEBUG` level logging.  To mask sensitive input values (rather than exported values), see `global.protected` and `resource.prop.protected`.
 
 <File name='stackql_manifest.yml'>
 
