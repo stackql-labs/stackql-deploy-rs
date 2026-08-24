@@ -5,6 +5,7 @@ export { default as Globals } from "./globals.mdx";
 export { default as GlobalName } from "./globals/name.mdx";
 export { default as GlobalDescription } from "./globals/description.mdx";
 export { default as GlobalValue } from "./globals/value.mdx";
+export { default as GlobalProtected } from "./globals/protected.mdx";
 export { default as Resources } from "./resources.mdx";
 export { default as ResourceName } from "./resources/name.mdx";
 export { default as ResourceType } from "./resources/type.mdx";
@@ -22,5 +23,6 @@ export { default as ResourcePropDescription } from "./resources/props/descriptio
 export { default as ResourcePropValue } from "./resources/props/value.mdx";
 export { default as ResourcePropValues } from "./resources/props/values.mdx";
 export { default as ResourcePropMerge } from "./resources/props/merge.mdx";
+export { default as ResourcePropProtected } from "./resources/props/protected.mdx";
 export { default as Exports } from "./exports.mdx";
 export { default as Version } from "./version.mdx";

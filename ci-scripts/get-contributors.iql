@@ -1,20 +1,25 @@
+-- Contributors across the stackql, stackql-deploy and stackql-deploy-rs repos,
+-- ordered by total contributions. Non-human contributors are excluded:
+-- GitHub-flagged bot accounts (type = 'Bot') and AI agent user accounts.
 SELECT login FROM
 (
 SELECT login, SUM(contributions) total_contributions FROM
-(SELECT login, contributions
+(SELECT login, type, contributions
 FROM github.repos.contributors
 WHERE owner = 'stackql'
 AND repo = 'stackql'
 UNION
-SELECT login, contributions
+SELECT login, type, contributions
 FROM github.repos.contributors
 WHERE owner = 'stackql'
 AND repo = 'stackql-deploy'
 UNION
-SELECT login, contributions
+SELECT login, type, contributions
 FROM github.repos.contributors
 WHERE owner = 'stackql'
-AND repo = 'stackql-deploy-rs') t 
+AND repo = 'stackql-deploy-rs') t
+WHERE type <> 'Bot'
+AND login NOT IN ('claude')
 GROUP BY login
 ORDER BY total_contributions DESC
 ) t1

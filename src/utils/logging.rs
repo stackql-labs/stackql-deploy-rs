@@ -55,16 +55,17 @@ pub fn initialize_logger(log_level: &str) {
         let color = LevelColors::get_color(level_str);
         let reset = LevelColors::RESET;
 
+        // Scrub protected (secret) values from every log line, regardless of
+        // level or origin. This is the single chokepoint that keeps protected
+        // manifest values out of dry-run output, --show-queries, and debug logs.
+        let message = crate::core::secrets::redact(&record.args().to_string());
+
         if record.level() <= log::Level::Info {
             // For info, warn, error: [timestamp LEVEL stackql_deploy] message
             writeln!(
                 buf,
                 "[{} {}{}{} stackql_deploy] {}",
-                timestamp,
-                color,
-                level_str,
-                reset,
-                record.args()
+                timestamp, color, level_str, reset, message
             )
         } else {
             // For debug, trace: [timestamp LEVEL file_name (line_num)] message
@@ -83,7 +84,7 @@ pub fn initialize_logger(log_level: &str) {
                 reset,
                 file_name,
                 record.line().unwrap_or(0),
-                record.args()
+                message
             )
         }
     });

@@ -89,6 +89,11 @@ pub struct GlobalVar {
     /// Optional description
     #[serde(default)]
     pub description: String,
+
+    /// When true, the rendered value is masked in all log output
+    /// (dry-run queries, --show-queries, debug logs)
+    #[serde(default)]
+    pub protected: bool,
 }
 
 /// Represents a resource in the manifest.
@@ -209,6 +214,11 @@ pub struct Property {
     /// Items to merge with the value
     #[serde(default)]
     pub merge: Option<Vec<String>>,
+
+    /// When true, the rendered value is masked in all log output
+    /// (dry-run queries, --show-queries, debug logs)
+    #[serde(default)]
+    pub protected: bool,
 }
 
 /// Represents a value for a property in a specific environment.

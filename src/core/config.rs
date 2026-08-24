@@ -182,6 +182,9 @@ pub fn render_globals(
         }
 
         let sql_compat = to_sql_compatible_json(&rendered);
+        if global_var.protected {
+            crate::core::secrets::register_secret(&sql_compat);
+        }
         debug!(
             "Setting global variable [{}] to {}",
             global_var.name, sql_compat
@@ -210,6 +213,9 @@ pub fn render_properties(
         if let Some(ref value) = prop.value {
             let rendered = render_value(engine, value, &resource_context);
             let sql_compat = to_sql_compatible_json(&rendered);
+            if prop.protected {
+                crate::core::secrets::register_secret(&sql_compat);
+            }
             debug!("Setting property [{}] to {}", prop.name, sql_compat);
             prop_context.insert(prop.name.clone(), sql_compat.clone());
             resource_context.insert(prop.name.clone(), sql_compat);
@@ -219,6 +225,9 @@ pub fn render_properties(
             if let Some(env_val) = values.get(stack_env) {
                 let rendered = render_value(engine, &env_val.value, &resource_context);
                 let sql_compat = to_sql_compatible_json(&rendered);
+                if prop.protected {
+                    crate::core::secrets::register_secret(&sql_compat);
+                }
                 debug!(
                     "Setting property [{}] using env-specific value to {}",
                     prop.name, sql_compat
@@ -293,6 +302,9 @@ pub fn render_properties(
 
             if let Some(merged_val) = base_value {
                 let processed = serde_json::to_string(&merged_val).unwrap_or_default();
+                if prop.protected {
+                    crate::core::secrets::register_secret(&processed);
+                }
                 prop_context.insert(prop.name.clone(), processed.clone());
                 resource_context.insert(prop.name.clone(), processed);
             }
@@ -437,7 +449,7 @@ pub fn is_json(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resource::manifest::{Property, Resource};
+    use crate::resource::manifest::{Property, PropertyValue, Resource};
 
     /// Helper to create a minimal Resource for testing.
     fn make_resource(name: &str, props: Vec<Property>) -> Resource {
@@ -466,6 +478,7 @@ mod tests {
             values: None,
             description: String::new(),
             merge: None,
+            protected: false,
         }
     }
 
@@ -653,5 +666,116 @@ mod tests {
         let ctx = get_full_context(&engine, &global_context, &resource, "dev", Some(token));
 
         assert_eq!(ctx.get("client_token").unwrap(), token);
+    }
+
+    // ------------------------------------------------------------------
+    // protected (secret) value tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_protected_prop_registered_for_redaction() {
+        let engine = TemplateEngine::new();
+        let global_context = HashMap::new();
+
+        let mut prop = make_prop("master_user_password", "Cfg-Prop-S3cret-Value-1");
+        prop.protected = true;
+
+        let ctx = render_properties(&engine, &[prop], &global_context, "dev");
+
+        // Value is stored unmasked in the context (real queries need it)
+        assert_eq!(
+            ctx.get("master_user_password").unwrap(),
+            "Cfg-Prop-S3cret-Value-1"
+        );
+        // But the log scrubber masks it wherever it appears
+        let redacted =
+            crate::core::secrets::redact("INSERT ... SELECT 'Cfg-Prop-S3cret-Value-1', ...");
+        assert!(
+            !redacted.contains("Cfg-Prop-S3cret-Value-1"),
+            "protected prop value leaked: {}",
+            redacted
+        );
+    }
+
+    #[test]
+    fn test_protected_prop_env_specific_value_registered_for_redaction() {
+        let engine = TemplateEngine::new();
+        let global_context = HashMap::new();
+
+        let mut values = HashMap::new();
+        values.insert(
+            "dev".to_string(),
+            PropertyValue {
+                value: serde_yaml::Value::String("Cfg-EnvProp-S3cret-Value-2".to_string()),
+            },
+        );
+        let prop = Property {
+            name: "api_key".to_string(),
+            value: None,
+            values: Some(values),
+            description: String::new(),
+            merge: None,
+            protected: true,
+        };
+
+        let ctx = render_properties(&engine, &[prop], &global_context, "dev");
+
+        assert_eq!(ctx.get("api_key").unwrap(), "Cfg-EnvProp-S3cret-Value-2");
+        let redacted = crate::core::secrets::redact("key = 'Cfg-EnvProp-S3cret-Value-2'");
+        assert!(!redacted.contains("Cfg-EnvProp-S3cret-Value-2"));
+    }
+
+    #[test]
+    fn test_protected_global_registered_for_redaction() {
+        let engine = TemplateEngine::new();
+        let mut vars = HashMap::new();
+        vars.insert(
+            "DB_PASSWORD".to_string(),
+            "Cfg-Global-S3cret-Value-3".to_string(),
+        );
+
+        let manifest: Manifest = serde_yaml::from_str(
+            r#"
+version: 1
+name: test-stack
+providers:
+  - aws
+globals:
+  - name: db_password
+    value: "{{ DB_PASSWORD }}"
+    protected: true
+  - name: region
+    value: us-east-1
+"#,
+        )
+        .unwrap();
+
+        let ctx = render_globals(&engine, &vars, &manifest, "dev", "test-stack");
+
+        // Stored unmasked
+        assert_eq!(ctx.get("db_password").unwrap(), "Cfg-Global-S3cret-Value-3");
+        // Masked in log output
+        let redacted = crate::core::secrets::redact("password = 'Cfg-Global-S3cret-Value-3'");
+        assert!(!redacted.contains("Cfg-Global-S3cret-Value-3"));
+        // Non-protected global is not masked
+        let not_redacted = crate::core::secrets::redact("region = 'us-east-1'");
+        assert!(not_redacted.contains("us-east-1"));
+    }
+
+    #[test]
+    fn test_unprotected_prop_not_registered() {
+        let engine = TemplateEngine::new();
+        let global_context = HashMap::new();
+
+        let prop = make_prop("instance_class", "Cfg-Plain-Value-Not-Secret-4");
+
+        let ctx = render_properties(&engine, &[prop], &global_context, "dev");
+
+        assert_eq!(
+            ctx.get("instance_class").unwrap(),
+            "Cfg-Plain-Value-Not-Secret-4"
+        );
+        let out = crate::core::secrets::redact("class = 'Cfg-Plain-Value-Not-Secret-4'");
+        assert!(out.contains("Cfg-Plain-Value-Not-Secret-4"));
     }
 }

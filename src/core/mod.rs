@@ -8,5 +8,6 @@
 pub mod config;
 pub mod env;
 pub mod errors;
+pub mod secrets;
 pub mod templating;
 pub mod utils;
