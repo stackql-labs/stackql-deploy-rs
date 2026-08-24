@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MASK","MIN_SECRET_LEN"],"fn":["redact","register_secret"],"static":["SECRETS"]};
